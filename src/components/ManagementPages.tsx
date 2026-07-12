@@ -1,0 +1,345 @@
+import { For, Show, createMemo, createSignal } from "solid-js";
+import { createStore } from "solid-js/store";
+import {
+  CalendarDays,
+  Check,
+  Copy,
+  Filter,
+  FolderOpen,
+  Heart,
+  Image as ImageIcon,
+  ListFilter,
+  MoreHorizontal,
+  Play,
+  Plus,
+  RotateCw,
+  Save,
+  Search,
+  SlidersHorizontal,
+  Sparkles,
+  SquarePen,
+  Trash2,
+} from "lucide-solid";
+import { api } from "../lib/api";
+import type { TranslationKey } from "../lib/i18n";
+import { getModelLabel, getModelsForProvider } from "../lib/models";
+import type {
+  CommonDescription,
+  GenerationPreset,
+  HistoryRecord,
+  Project,
+  ProviderProfile,
+} from "../types";
+import { EmptyState, Field, IconButton, Modal, Toggle } from "./common";
+import TaskDetailModal from "./TaskDetailModal";
+
+interface BaseProps {
+  project: Project;
+  providers: ProviderProfile[];
+  t: (key: TranslationKey) => string;
+}
+
+export function HistoryPage(props: BaseProps & {
+  history: HistoryRecord[];
+  onRerun: (record: HistoryRecord) => void;
+  onContinue: (record: HistoryRecord) => void;
+  onToggleFavorite: (recordId: string) => void;
+  onDelete: (recordId: string) => void;
+}) {
+  const [query, setQuery] = createSignal("");
+  const [providerId, setProviderId] = createSignal("all");
+  const [status, setStatus] = createSignal("all");
+  const [model, setModel] = createSignal("all");
+  const [selectedRecord, setSelectedRecord] = createSignal<HistoryRecord | null>(null);
+  const records = createMemo(() => props.history
+    .filter((record) => record.projectId === props.project.id)
+    .filter((record) => providerId() === "all" || record.providerId === providerId())
+    .filter((record) => status() === "all" || record.status === status())
+    .filter((record) => model() === "all" || record.model === model())
+    .filter((record) => `${record.prompt} ${record.model}`.toLowerCase().includes(query().toLowerCase())));
+  const projectModels = createMemo(() => [...new Set(props.history.filter((item) => item.projectId === props.project.id).map((item) => item.model))]);
+
+  return (
+    <div class="page management-page history-page">
+      <header class="page-header">
+        <div><h1>{props.t("history")}</h1><p>{props.project.name}</p></div>
+        <button class="button secondary" type="button"><CalendarDays size={16} />30 days</button>
+      </header>
+
+      <section class="filter-bar">
+        <label class="search-field"><Search size={16} /><input placeholder={props.t("searchHistory")} value={query()} onInput={(event) => setQuery(event.currentTarget.value)} /></label>
+        <select value={providerId()} onChange={(event) => setProviderId(event.currentTarget.value)}>
+          <option value="all">{props.t("allProviders")}</option>
+          <For each={props.providers}>{(provider) => <option value={provider.id}>{provider.name}</option>}</For>
+        </select>
+        <select value={model()} onChange={(event) => setModel(event.currentTarget.value)}>
+          <option value="all">{props.t("allModels")}</option>
+          <For each={projectModels()}>{(item) => <option value={item}>{getModelLabel(item)}</option>}</For>
+        </select>
+        <select value={status()} onChange={(event) => setStatus(event.currentTarget.value)}>
+          <option value="all">{props.t("allStatuses")}</option>
+          <option value="completed">{props.t("statusCompleted")}</option>
+          <option value="failed">{props.t("statusFailed")}</option>
+          <option value="running">{props.t("statusRunning")}</option>
+        </select>
+        <IconButton label={props.t("filters")}><ListFilter size={16} /></IconButton>
+      </section>
+
+      <Show when={records().length > 0} fallback={<EmptyState icon={<Filter size={24} />} title={props.t("historyEmpty")} />}>
+        <div class="history-table-wrap">
+          <table class="history-table">
+            <thead><tr><th>Preview</th><th>{props.t("prompt")}</th><th>{props.t("provider")}</th><th>{props.t("model")}</th><th>{props.t("mode")}</th><th>Status</th><th>Date</th><th /></tr></thead>
+            <tbody>
+              <For each={records()}>
+                {(record) => (
+                  <tr>
+                    <td><div class="history-thumb"><Show when={record.assets[0]} fallback={<ImageIcon size={18} />}><img src={record.assets[0]?.url} alt="" /></Show><Show when={record.assets.length > 1}><span>+{record.assets.length - 1}</span></Show></div></td>
+                    <td><div class="history-prompt"><strong>{record.prompt}</strong><small>{record.count} image{record.count === 1 ? "" : "s"}{record.durationMs ? ` · ${(record.durationMs / 1000).toFixed(1)}s` : ""}</small></div></td>
+                    <td>{record.providerName}</td>
+                    <td><span class="model-pill">{getModelLabel(record.model)}</span></td>
+                    <td>{record.mode}</td>
+                    <td><span class={`status-chip status-${record.status}`}>{props.t((`status${record.status[0].toUpperCase()}${record.status.slice(1)}`) as TranslationKey)}</span></td>
+                    <td>{new Date(record.createdAt).toLocaleString()}</td>
+                    <td>
+                      <div class="table-actions">
+                        <IconButton label={props.t("favorite")} active={record.favorite} onClick={() => props.onToggleFavorite(record.id)}><Heart size={15} fill={record.favorite ? "currentColor" : "none"} /></IconButton>
+                        <IconButton label={props.t("retry")} onClick={() => props.onRerun(record)}><RotateCw size={15} /></IconButton>
+                        <Show when={record.interactionId}><IconButton label={props.t("continueEditing")} onClick={() => props.onContinue(record)}><SquarePen size={15} /></IconButton></Show>
+                        <IconButton label={props.t("taskDetails")} onClick={() => setSelectedRecord(record)}><MoreHorizontal size={15} /></IconButton>
+                        <IconButton label={props.t("delete")} onClick={() => props.onDelete(record.id)}><Trash2 size={15} /></IconButton>
+                      </div>
+                    </td>
+                  </tr>
+                )}
+              </For>
+            </tbody>
+          </table>
+        </div>
+      </Show>
+      <TaskDetailModal task={selectedRecord()} t={props.t} onClose={() => setSelectedRecord(null)} />
+    </div>
+  );
+}
+
+export function DescriptionsPage(props: BaseProps & {
+  onChange: (descriptions: CommonDescription[]) => void;
+}) {
+  const [selectedId, setSelectedId] = createSignal(props.project.descriptions[0]?.id ?? "");
+  const [draft, setDraft] = createStore<CommonDescription>({
+    id: "",
+    title: "",
+    content: "",
+    enabled: true,
+    placement: "suffix",
+    createdAt: new Date().toISOString(),
+  });
+
+  const select = (item: CommonDescription) => {
+    setSelectedId(item.id);
+    setDraft({ ...item });
+  };
+
+  const add = () => {
+    const item: CommonDescription = {
+      id: crypto.randomUUID(),
+      title: props.t("addDescription"),
+      content: "",
+      enabled: true,
+      placement: "suffix",
+      createdAt: new Date().toISOString(),
+    };
+    props.onChange([...props.project.descriptions, item]);
+    select(item);
+  };
+
+  const save = () => {
+    if (!draft.id) return;
+    props.onChange(props.project.descriptions.map((item) => item.id === draft.id ? { ...draft } : item));
+  };
+
+  const remove = (id: string) => {
+    const next = props.project.descriptions.filter((item) => item.id !== id);
+    props.onChange(next);
+    if (selectedId() === id) {
+      if (next[0]) select(next[0]);
+      else setSelectedId("");
+    }
+  };
+
+  return (
+    <div class="page management-page">
+      <header class="page-header"><div><h1>{props.t("descriptionTitle")}</h1><p>{props.t("descriptionSubtitle")}</p></div><button class="button primary" type="button" onClick={add}><Plus size={16} />{props.t("addDescription")}</button></header>
+      <div class="split-manager">
+        <aside class="manager-list">
+          <For each={props.project.descriptions}>
+            {(item) => (
+              <button type="button" class={`manager-list-item ${selectedId() === item.id ? "is-selected" : ""}`} onClick={() => select(item)}>
+                <span class={`description-placement placement-${item.placement}`}>{item.placement === "prefix" ? props.t("prefix") : props.t("suffix")}</span>
+                <span><strong>{item.title}</strong><small>{item.content || "-"}</small></span>
+                <span class={`enabled-indicator ${item.enabled ? "is-enabled" : ""}`}><Check size={12} /></span>
+              </button>
+            )}
+          </For>
+          <Show when={props.project.descriptions.length === 0}><EmptyState icon={<Sparkles size={22} />} title={props.t("addDescription")} /></Show>
+        </aside>
+        <section class="manager-editor">
+          <Show when={selectedId()} fallback={<EmptyState icon={<SlidersHorizontal size={24} />} title={props.t("addDescription")} />}>
+            <div class="editor-heading"><div><span class="section-kicker">{props.t("edit")}</span><h2>{draft.title}</h2></div><IconButton label={props.t("delete")} onClick={() => remove(draft.id)}><Trash2 size={16} /></IconButton></div>
+            <div class="editor-form">
+              <Field label={props.t("name")}><input value={draft.title} onInput={(event) => setDraft("title", event.currentTarget.value)} /></Field>
+              <Field label={props.t("placement")}><div class="segmented"><button type="button" class={draft.placement === "prefix" ? "is-active" : ""} onClick={() => setDraft("placement", "prefix")}>{props.t("prefix")}</button><button type="button" class={draft.placement === "suffix" ? "is-active" : ""} onClick={() => setDraft("placement", "suffix")}>{props.t("suffix")}</button></div></Field>
+              <Field label={props.t("content")}><textarea rows="10" value={draft.content} onInput={(event) => setDraft("content", event.currentTarget.value)} /></Field>
+              <Toggle checked={draft.enabled} onChange={(value) => setDraft("enabled", value)} label={props.t("enabled")} />
+              <div class="editor-actions"><button class="button primary" type="button" onClick={save}><Save size={16} />{props.t("save")}</button></div>
+            </div>
+          </Show>
+        </section>
+      </div>
+    </div>
+  );
+}
+
+export function PresetsPage(props: BaseProps & {
+  onChange: (presets: GenerationPreset[]) => void;
+  onApply: (preset: GenerationPreset) => void;
+}) {
+  const [modalOpen, setModalOpen] = createSignal(false);
+  const [draft, setDraft] = createStore<GenerationPreset>({
+    id: "",
+    name: "",
+    description: "",
+    providerId: props.providers[0]?.id ?? "",
+    model: props.providers[0]?.models[0] ?? "",
+    mode: "generate",
+    aspectRatio: "1:1",
+    size: "1K",
+    quality: "auto",
+    outputFormat: "png",
+    promptTemplate: "",
+    createdAt: new Date().toISOString(),
+  });
+  const selectedProvider = createMemo(() => props.providers.find((item) => item.id === draft.providerId));
+
+  const openEditor = (preset?: GenerationPreset) => {
+    if (preset) setDraft({ ...preset });
+    else {
+      const provider = props.providers.find((item) => item.enabled) ?? props.providers[0];
+      setDraft({
+        id: crypto.randomUUID(), name: "", description: "", providerId: provider?.id ?? "", model: provider?.models[0] ?? "", mode: "generate",
+        aspectRatio: "1:1", size: "1K", quality: "auto", outputFormat: "png", promptTemplate: "", createdAt: new Date().toISOString(),
+      });
+    }
+    setModalOpen(true);
+  };
+
+  const save = () => {
+    if (!draft.name.trim()) return;
+    const exists = props.project.presets.some((item) => item.id === draft.id);
+    props.onChange(exists ? props.project.presets.map((item) => item.id === draft.id ? { ...draft } : item) : [...props.project.presets, { ...draft }]);
+    setModalOpen(false);
+  };
+
+  const duplicate = (preset: GenerationPreset) => {
+    props.onChange([...props.project.presets, { ...preset, id: crypto.randomUUID(), name: `${preset.name} Copy`, createdAt: new Date().toISOString() }]);
+  };
+
+  const footer = <><button class="button secondary" type="button" onClick={() => setModalOpen(false)}>{props.t("cancel")}</button><button class="button primary" type="button" onClick={save}><Save size={16} />{props.t("save")}</button></>;
+
+  return (
+    <div class="page management-page">
+      <header class="page-header"><div><h1>{props.t("presetTitle")}</h1><p>{props.t("presetSubtitle")}</p></div><button class="button primary" type="button" onClick={() => openEditor()}><Plus size={16} />{props.t("addPreset")}</button></header>
+      <Show when={props.project.presets.length > 0} fallback={<EmptyState icon={<SlidersHorizontal size={24} />} title={props.t("addPreset")} />}>
+        <div class="preset-grid">
+          <For each={props.project.presets}>
+            {(preset) => (
+              <article class="preset-card">
+                <header><span class="preset-icon"><SlidersHorizontal size={17} /></span><IconButton label="More"><MoreHorizontal size={16} /></IconButton></header>
+                <div><h2>{preset.name}</h2><p>{preset.description}</p></div>
+                <div class="preset-specs"><span>{getModelLabel(preset.model)}</span><span>{preset.aspectRatio}</span><span>{preset.size}</span><span>{preset.outputFormat.toUpperCase()}</span></div>
+                <footer>
+                  <button class="button primary compact" type="button" onClick={() => props.onApply(preset)}><Play size={15} />{props.t("applyPreset")}</button>
+                  <IconButton label={props.t("edit")} onClick={() => openEditor(preset)}><SlidersHorizontal size={15} /></IconButton>
+                  <IconButton label={props.t("duplicate")} onClick={() => duplicate(preset)}><Copy size={15} /></IconButton>
+                  <IconButton label={props.t("delete")} onClick={() => props.onChange(props.project.presets.filter((item) => item.id !== preset.id))}><Trash2 size={15} /></IconButton>
+                </footer>
+              </article>
+            )}
+          </For>
+        </div>
+      </Show>
+
+      <Modal open={modalOpen()} title={props.t("addPreset")} onClose={() => setModalOpen(false)} footer={footer} size="large">
+        <div class="preset-form">
+          <Field label={props.t("name")} required><input value={draft.name} onInput={(event) => setDraft("name", event.currentTarget.value)} /></Field>
+          <Field label={props.t("projectDescription")}><input value={draft.description} onInput={(event) => setDraft("description", event.currentTarget.value)} /></Field>
+          <div class="control-grid">
+            <Field label={props.t("provider")}><select value={draft.providerId} onChange={(event) => { const providerId = event.currentTarget.value; const provider = props.providers.find((item) => item.id === providerId); setDraft({ providerId, model: provider?.models[0] ?? "" }); }}><For each={props.providers}>{(provider) => <option value={provider.id}>{provider.name}</option>}</For></select></Field>
+            <Field label={props.t("model")}><select value={draft.model} onChange={(event) => setDraft("model", event.currentTarget.value)}><For each={getModelsForProvider(selectedProvider())}>{(model) => <option value={model.id}>{model.label}</option>}</For></select></Field>
+            <Field label={props.t("mode")}><select value={draft.mode} onChange={(event) => setDraft("mode", event.currentTarget.value as GenerationPreset["mode"])}><option value="generate">{props.t("generateMode")}</option><option value="edit">{props.t("editMode")}</option><option value="mask">{props.t("maskMode")}</option><option value="variation">{props.t("variationMode")}</option></select></Field>
+            <Field label={props.t("aspectRatio")}><input value={draft.aspectRatio} onInput={(event) => setDraft("aspectRatio", event.currentTarget.value)} /></Field>
+            <Field label={props.t("size")}><input value={draft.size} onInput={(event) => setDraft("size", event.currentTarget.value)} /></Field>
+            <Field label={props.t("outputFormat")}><input value={draft.outputFormat} onInput={(event) => setDraft("outputFormat", event.currentTarget.value)} /></Field>
+          </div>
+          <Field label={props.t("prompt")}><textarea rows="4" value={draft.promptTemplate} onInput={(event) => setDraft("promptTemplate", event.currentTarget.value)} /></Field>
+        </div>
+      </Modal>
+    </div>
+  );
+}
+
+export function ProjectSettingsPage(props: BaseProps & {
+  onChange: (project: Project) => void;
+  onClearHistory: () => void;
+}) {
+  const [draft, setDraft] = createStore<Project>({ ...props.project, settings: { ...props.project.settings } });
+  const defaultProvider = createMemo(() => props.providers.find((item) => item.id === draft.settings.defaultProviderId));
+  const [saved, setSaved] = createSignal(false);
+
+  const chooseFolder = async () => {
+    const path = await api.chooseDirectory(draft.storagePath);
+    if (path) setDraft("storagePath", path);
+  };
+
+  const save = () => {
+    props.onChange({ ...draft, updatedAt: new Date().toISOString() });
+    setSaved(true);
+    window.setTimeout(() => setSaved(false), 1400);
+  };
+
+  return (
+    <div class="page management-page settings-page">
+      <header class="page-header"><div><h1>{props.t("projectSettings")}</h1><p>{props.project.name}</p></div><button class="button primary" type="button" onClick={save}><Show when={saved()} fallback={<Save size={16} />}><Check size={16} /></Show>{saved() ? props.t("saved") : props.t("save")}</button></header>
+      <div class="settings-layout">
+        <section class="settings-section">
+          <div class="settings-section-heading"><h2>{props.t("projectInfo")}</h2></div>
+          <div class="settings-form">
+            <Field label={props.t("projectName")}><input value={draft.name} onInput={(event) => setDraft("name", event.currentTarget.value)} /></Field>
+            <Field label={props.t("projectDescription")}><textarea rows="3" value={draft.description} onInput={(event) => setDraft("description", event.currentTarget.value)} /></Field>
+            <Field label={props.t("storagePath")}><div class="input-action-group"><input value={draft.storagePath} onInput={(event) => setDraft("storagePath", event.currentTarget.value)} /><button class="button secondary icon-only" type="button" onClick={chooseFolder}><FolderOpen size={17} /></button></div></Field>
+          </div>
+        </section>
+        <section class="settings-section">
+          <div class="settings-section-heading"><h2>{props.t("defaultModel")}</h2></div>
+          <div class="settings-form control-grid">
+            <Field label={props.t("provider")}><select value={draft.settings.defaultProviderId} onChange={(event) => { const providerId = event.currentTarget.value; const provider = props.providers.find((item) => item.id === providerId); setDraft("settings", { ...draft.settings, defaultProviderId: providerId, defaultModel: provider?.models[0] ?? "" }); }}><For each={props.providers}>{(provider) => <option value={provider.id}>{provider.name}</option>}</For></select></Field>
+            <Field label={props.t("model")}><select value={draft.settings.defaultModel} onChange={(event) => setDraft("settings", "defaultModel", event.currentTarget.value)}><For each={getModelsForProvider(defaultProvider())}>{(model) => <option value={model.id}>{model.label}</option>}</For></select></Field>
+            <Field label={props.t("namingPattern")} class="span-2"><input value={draft.settings.namingPattern} spellcheck={false} onInput={(event) => setDraft("settings", "namingPattern", event.currentTarget.value)} /></Field>
+          </div>
+        </section>
+        <section class="settings-section">
+          <div class="settings-section-heading"><h2>{props.t("settings")}</h2></div>
+          <div class="settings-toggle-list">
+            <Toggle checked={draft.settings.useCommonDescriptions} onChange={(value) => setDraft("settings", "useCommonDescriptions", value)} label={props.t("commonDescriptionSetting")} />
+            <Toggle checked={draft.settings.saveMetadata} onChange={(value) => setDraft("settings", "saveMetadata", value)} label={props.t("saveMetadata")} />
+            <Toggle checked={draft.settings.saveRawResponse} onChange={(value) => setDraft("settings", "saveRawResponse", value)} label={props.t("saveRawResponse")} />
+            <Toggle checked={draft.settings.autoOpenFolder} onChange={(value) => setDraft("settings", "autoOpenFolder", value)} label={props.t("autoOpenFolder")} />
+          </div>
+        </section>
+        <section class="settings-section danger-section">
+          <div class="settings-section-heading"><h2>{props.t("dangerZone")}</h2></div>
+          <div class="danger-row"><div><strong>{props.t("clearHistory")}</strong><small>{props.project.name}</small></div><button class="button danger" type="button" onClick={props.onClearHistory}><Trash2 size={16} />{props.t("clearHistory")}</button></div>
+        </section>
+      </div>
+    </div>
+  );
+}

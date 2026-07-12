@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "catalog_version": "2026-07-12",
+  "provider": "xai",
+  "documentation": [
+    "https://docs.x.ai/developers/model-capabilities/imagine",
+    "https://docs.x.ai/developers/model-capabilities/images/generation",
+    "https://docs.x.ai/developers/model-capabilities/images/editing",
+    "https://docs.x.ai/developers/advanced-api-usage/batch-api"
+  ],
+  "models": [
+    {
+      "id": "grok-imagine-image",
+      "display_name": "Grok Imagine Image",
+      "aliases": ["grok-imagine-image-*"],
+      "api_surfaces": ["images"],
+      "operations": ["generate", "edit"],
+      "prompt_max_chars": null,
+      "max_input_images": 3,
+      "output_count": { "min": 1, "max": 10 },
+      "aspect_ratios": ["auto", "1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "2:1", "1:2", "19.5:9", "9:19.5", "20:9", "9:20"],
+      "resolutions": ["1k", "2k"],
+      "response_formats": ["url", "b64_json"],
+      "features": {
+        "batch": true,
+        "multiple_images": true,
+        "file_inputs": true,
+        "file_outputs": true
+      },
+      "defaults": { "aspect_ratio": "auto", "resolution": "1k", "response_format": "url" },
+      "notes": ["A single-image edit follows the input aspect ratio; multi-image edits may override it."]
+    },
+    {
+      "id": "grok-imagine-image-quality",
+      "display_name": "Grok Imagine Image Quality",
+      "aliases": ["grok-imagine-image-quality-*"],
+      "api_surfaces": ["images"],
+      "operations": ["generate", "edit"],
+      "prompt_max_chars": null,
+      "max_input_images": 3,
+      "output_count": { "min": 1, "max": 10 },
+      "aspect_ratios": ["auto", "1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "2:1", "1:2", "19.5:9", "9:19.5", "20:9", "9:20"],
+      "resolutions": ["1k", "2k"],
+      "response_formats": ["url", "b64_json"],
+      "features": {
+        "batch": true,
+        "multiple_images": true,
+        "file_inputs": true,
+        "file_outputs": true
+      },
+      "defaults": { "aspect_ratio": "auto", "resolution": "1k", "response_format": "url" },
+      "notes": ["A single-image edit follows the input aspect ratio; multi-image edits may override it."]
+    }
+  ]
+}

@@ -1,0 +1,110 @@
+{
+  "schema_version": 1,
+  "catalog_version": "2026-07-12",
+  "provider": "gemini",
+  "documentation": [
+    "https://ai.google.dev/gemini-api/docs/image-generation",
+    "https://ai.google.dev/api/interactions-api",
+    "https://ai.google.dev/gemini-api/docs/batch-api"
+  ],
+  "models": [
+    {
+      "id": "gemini-3.1-flash-image",
+      "display_name": "Gemini 3.1 Flash Image",
+      "aliases": ["gemini-3.1-flash-image-preview"],
+      "api_surfaces": ["interactions", "generate_content"],
+      "operations": ["generate", "edit", "conversation_continue", "video_reference_to_image"],
+      "prompt_max_chars": null,
+      "max_input_images": 14,
+      "output_count": { "min": 1, "max": 1 },
+      "aspect_ratios": ["1:1", "1:4", "1:8", "2:3", "3:2", "3:4", "4:1", "4:3", "4:5", "5:4", "8:1", "9:16", "16:9", "21:9"],
+      "resolutions": ["512", "1K", "2K", "4K"],
+      "formats": ["image/png"],
+      "features": {
+        "streaming": true,
+        "background": true,
+        "batch": true,
+        "multiple_images": true,
+        "file_inputs": true,
+        "interleaved_text": true,
+        "thinking": true,
+        "google_search": true,
+        "image_search": true,
+        "video_input": true
+      },
+      "defaults": { "aspect_ratio": "1:1", "resolution": "1K", "response_modalities": "IMAGE", "thinking_level": "minimal" },
+      "notes": ["Supports resemblance for up to four characters and fidelity for up to ten objects in one workflow."]
+    },
+    {
+      "id": "gemini-3.1-flash-lite-image",
+      "display_name": "Gemini 3.1 Flash Lite Image",
+      "aliases": ["gemini-3.1-flash-lite-image-preview"],
+      "api_surfaces": ["interactions", "generate_content"],
+      "operations": ["generate", "edit", "conversation_continue"],
+      "prompt_max_chars": null,
+      "max_input_images": 14,
+      "output_count": { "min": 1, "max": 1 },
+      "aspect_ratios": ["1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9"],
+      "resolutions": ["1K"],
+      "formats": ["image/png"],
+      "features": {
+        "streaming": true,
+        "background": true,
+        "batch": true,
+        "multiple_images": true,
+        "file_inputs": true,
+        "interleaved_text": true,
+        "thinking": true
+      },
+      "defaults": { "aspect_ratio": "1:1", "resolution": "1K", "response_modalities": "IMAGE", "thinking_level": "minimal" },
+      "notes": ["The stable desktop preset exposes 1K output for this cost-optimized model."]
+    },
+    {
+      "id": "gemini-3-pro-image",
+      "display_name": "Gemini 3 Pro Image",
+      "aliases": ["gemini-3-pro-image-preview"],
+      "api_surfaces": ["interactions", "generate_content"],
+      "operations": ["generate", "edit", "conversation_continue"],
+      "prompt_max_chars": null,
+      "max_input_images": 14,
+      "output_count": { "min": 1, "max": 1 },
+      "aspect_ratios": ["1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9"],
+      "resolutions": ["1K", "2K", "4K"],
+      "formats": ["image/png"],
+      "features": {
+        "streaming": true,
+        "background": true,
+        "batch": true,
+        "multiple_images": true,
+        "file_inputs": true,
+        "interleaved_text": true,
+        "thinking": true,
+        "google_search": true,
+        "image_search": true
+      },
+      "defaults": { "aspect_ratio": "1:1", "resolution": "1K", "response_modalities": "IMAGE", "thinking_level": "high" },
+      "notes": ["Up to five reference images receive high-fidelity treatment; up to fourteen images are accepted in total."]
+    },
+    {
+      "id": "gemini-2.5-flash-image",
+      "display_name": "Gemini 2.5 Flash Image",
+      "api_surfaces": ["interactions", "generate_content"],
+      "operations": ["generate", "edit", "conversation_continue"],
+      "prompt_max_chars": null,
+      "max_input_images": 3,
+      "output_count": { "min": 1, "max": 1 },
+      "aspect_ratios": ["1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9"],
+      "resolutions": ["1K"],
+      "formats": ["image/png"],
+      "features": {
+        "streaming": true,
+        "batch": true,
+        "multiple_images": true,
+        "file_inputs": true,
+        "interleaved_text": true
+      },
+      "defaults": { "aspect_ratio": "1:1", "resolution": "1K", "response_modalities": "IMAGE" },
+      "notes": ["Optimized for up to three input images and fixed approximately 1024px output."]
+    }
+  ]
+}

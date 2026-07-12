@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "catalog_version": "2026-07-12",
+  "provider": "open_ai_compatible",
+  "documentation": [],
+  "models": [
+    {
+      "id": "*",
+      "display_name": "OpenAI Images-compatible model",
+      "aliases": ["*"],
+      "api_surfaces": ["images"],
+      "operations": ["generate", "edit", "variation"],
+      "prompt_max_chars": null,
+      "max_input_images": null,
+      "output_count": { "min": 1, "max": 10 },
+      "features": { "multiple_images": true },
+      "defaults": { "count": "1" },
+      "notes": ["Unknown compatible models use protocol defaults until the user supplies a capability override."]
+    }
+  ]
+}
