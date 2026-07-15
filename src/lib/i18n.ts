@@ -269,6 +269,12 @@ const zh = {
   imageOutput: "图片输出",
   cost: "费用",
   noResponseParts: "此任务没有可用的响应部件",
+  preview: "预览",
+  date: "日期",
+  last30Days: "近 30 天",
+  imageUnit: "张",
+  more: "更多",
+  color: "颜色",
 } as const;
 
 const en: Record<keyof typeof zh, string> = {
@@ -540,6 +546,12 @@ const en: Record<keyof typeof zh, string> = {
   imageOutput: "Image output",
   cost: "Cost",
   noResponseParts: "No response parts are available for this task",
+  preview: "Preview",
+  date: "Date",
+  last30Days: "Last 30 days",
+  imageUnit: "images",
+  more: "More",
+  color: "Color",
 };
 
 export type TranslationKey = keyof typeof zh;

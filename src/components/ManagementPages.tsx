@@ -63,7 +63,7 @@ export function HistoryPage(props: BaseProps & {
     <div class="page management-page history-page">
       <header class="page-header">
         <div><h1>{props.t("history")}</h1><p>{props.project.name}</p></div>
-        <button class="button secondary" type="button"><CalendarDays size={16} />30 days</button>
+        <button class="button secondary" type="button"><CalendarDays size={16} />{props.t("last30Days")}</button>
       </header>
 
       <section class="filter-bar">
@@ -88,13 +88,13 @@ export function HistoryPage(props: BaseProps & {
       <Show when={records().length > 0} fallback={<EmptyState icon={<Filter size={24} />} title={props.t("historyEmpty")} />}>
         <div class="history-table-wrap">
           <table class="history-table">
-            <thead><tr><th>Preview</th><th>{props.t("prompt")}</th><th>{props.t("provider")}</th><th>{props.t("model")}</th><th>{props.t("mode")}</th><th>Status</th><th>Date</th><th /></tr></thead>
+            <thead><tr><th>{props.t("preview")}</th><th>{props.t("prompt")}</th><th>{props.t("provider")}</th><th>{props.t("model")}</th><th>{props.t("mode")}</th><th>{props.t("statusLabel")}</th><th>{props.t("date")}</th><th /></tr></thead>
             <tbody>
               <For each={records()}>
                 {(record) => (
                   <tr>
                     <td><div class="history-thumb"><Show when={record.assets[0]} fallback={<ImageIcon size={18} />}><img src={record.assets[0]?.url} alt="" /></Show><Show when={record.assets.length > 1}><span>+{record.assets.length - 1}</span></Show></div></td>
-                    <td><div class="history-prompt"><strong>{record.prompt}</strong><small>{record.count} image{record.count === 1 ? "" : "s"}{record.durationMs ? ` · ${(record.durationMs / 1000).toFixed(1)}s` : ""}</small></div></td>
+                    <td><div class="history-prompt"><strong>{record.prompt}</strong><small>{record.count} {props.t("imageUnit")}{record.durationMs ? ` · ${(record.durationMs / 1000).toFixed(1)}s` : ""}</small></div></td>
                     <td>{record.providerName}</td>
                     <td><span class="model-pill">{getModelLabel(record.model)}</span></td>
                     <td>{record.mode}</td>
@@ -253,7 +253,7 @@ export function PresetsPage(props: BaseProps & {
           <For each={props.project.presets}>
             {(preset) => (
               <article class="preset-card">
-                <header><span class="preset-icon"><SlidersHorizontal size={17} /></span><IconButton label="More"><MoreHorizontal size={16} /></IconButton></header>
+                <header><span class="preset-icon"><SlidersHorizontal size={17} /></span><IconButton label={props.t("more")}><MoreHorizontal size={16} /></IconButton></header>
                 <div><h2>{preset.name}</h2><p>{preset.description}</p></div>
                 <div class="preset-specs"><span>{getModelLabel(preset.model)}</span><span>{preset.aspectRatio}</span><span>{preset.size}</span><span>{preset.outputFormat.toUpperCase()}</span></div>
                 <footer>

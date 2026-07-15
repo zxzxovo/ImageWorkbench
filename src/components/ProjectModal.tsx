@@ -89,7 +89,7 @@ export default function ProjectModal(props: ProjectModalProps) {
             <button type="button" class="button secondary icon-only" title={props.t("browse")} onClick={browse}><FolderOpen size={17} /></button>
           </div>
         </Field>
-        <Field label="Color">
+        <Field label={props.t("color")}>
           <div class="color-swatches">
             {colors.map((color) => (
               <button
