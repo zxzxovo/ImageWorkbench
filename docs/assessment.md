@@ -28,48 +28,36 @@
 - 通用描述：多条、排序、启停、前置/后置。
 - 生成预设：创建/应用，参数优先级链（当前表单 > 预设 > 项目默认 > 模型默认）。
 - 创作页参数区：基础区 + 按能力动态展示的高级区。
-- 结果区“打开文件夹”按钮（已修复）。
-
-### 当前活跃开发中（未提交改动）
-- `TaskDetailModal`（新增 `.test.tsx`，功能迭代中）。
-- `bridge.rs` / `domain/types.rs` / `providers/types.rs` / `runtime/executor.rs`（提供商能力与执行层）。
-- `CreatorPage` / `ProviderModal`（UI 调整）。
+- 任务详情弹窗（TaskDetailModal）：请求 ID、失败原因、完整响应部件（图片/文本/思考/引用/搜索建议/用量）。
 
 ## 三、待完成 / 需补全（对照 plan.md）
 
 | 功能 | 计划来源 | 状态 |
 |---|---|---|
-| 历史页：筛选、对比、继续编辑、显示原始响应、清理远程文件 | plan.md §界面与参数 | 部分（基础历史页已有，高级能力待补） |
-| Gemini 交错响应（文字+图片+Thought+引用同屏；搜索建议隔离沙箱视图） | plan.md §界面与参数 | 未实现 |
+| 历史页：继续编辑（Gemini 多轮）、原始响应查看、清理供应商远程文件 | plan.md §界面与参数 | 部分（基础过滤+重跑已有；高级能力待补） |
+| Gemini 交错响应（文字+图片+Thought+引用同屏；搜索建议隔离沙箱） | plan.md §界面与参数 | TaskDetailModal 框架已有，待完善 |
 | xAI `<IMAGE_n>` 提示词插入、参考图拖拽排序 | plan.md §界面与参数 | 未实现 |
-| 内置蒙版编辑器（画笔/橡皮/缩放/平移/反转/清空/外部导入） | plan.md §界面与参数 | 待确认 |
-| 测试覆盖：Mock HTTP（SSE/后台轮询/Batch/限流/审核/临时 URL 下载）、组件测试、Playwright 多分辨率 | plan.md §验证与交付 | 部分（存在若干单测，覆盖不全） |
-| 错误提示 UI | 当前 bug | 需改进（见下） |
+| 内置蒙版编辑器（画笔/橡皮/缩放/平移/反转/清空/外部导入） | plan.md §界面与参数 | 待确认（i18n 键已存在） |
+| 测试覆盖：Mock HTTP（SSE/后台轮询/Batch/限流/审核/临时 URL 下载）、Playwright 多分辨率 | plan.md §验证与交付 | 部分（7 个测试文件，19 个用例；覆盖不全） |
 
-## 四、已知 Bug
+## 四、已修复（2026-07-16）
 
-### 下载按钮无效
+### 下载按钮无效 ✅
+- 修复 `api.exportAsset`：`save()` 调用前先 `getCurrentWindow().setFocus()`，解决 Windows 对话框被窗口遮挡问题。
+- `onDownload` 处理器增加 `filePath` 空值防御，缺本地文件时显示明确提示。
+- `export_asset` Rust 命令在路径校验失败时补充 `tracing::warn` 诊断日志。
 
-调用链：`onDownload` → `api.exportAsset(sourcePath, suggestedName, asset.url)` → `plugin-dialog.save()` → `invoke("export_asset")` → `validate_open_project_path` → `tokio::fs::copy`。
+### 错误提示不可见 ✅
+- `backendError` 由仅显示通用 tooltip 的角标改为显示完整错误文本的可关闭按钮，支持点击关闭。
 
-**根因分析（按可能性排序）：**
-1. Windows 上 `save()` 保存对话框被主窗口遮挡，用户未察觉，返回 `null` 后静默 `return false`。
-2. `validate_open_project_path` 校验失败（路径分隔符 `/` vs `\` 差异等），Rust 抛 `CommandError`。
-3. 远端存储资产（xAI Files / Gemini Files）`filePath` 为空，触发 `export source is not a file`。
+### i18n 硬编码字符串 ✅
+- 历史页表头（Preview/Status/Date/image count）、预设卡片 More 按钮、项目模态 Color 字段、任务详情 Date 行、远程任务 Status 列、用量 Image tokens — 全部改用 i18n 键。
+- 新增键：`preview`、`date`、`last30Days`、`imageUnit`、`more`、`color`、`imageTokens`、`dismissError`、`exportFailed`、`noLocalFile`。
 
-**放大问题**：当前 `backendError` 仅渲染为顶栏一个带 `title` tooltip 的图标徽章（显示 `backendUnavailable`），用户看不到具体错误，因此所有失败都表现为“无作用”。
+## 五、建议下一步优先级
 
-**修复计划：**
-1. 错误可见性：将 `backendError` 改为可关闭的行内错误条 / toast，显示完整错误信息（对所有操作生效）。
-2. Windows 对话框焦点：`save()` 前将窗口提到前台（`getCurrentWindow().setFocus()`）。
-3. 防御 `filePath` 为空：下载前校验，缺本地文件时明确提示。
-4. Rust 端在 `export_asset` 校验失败时补充诊断日志。
-
-## 五、建议优先级
-
-1. 立即：修复下载按钮（先做错误可见性，以确认真实失败点）。
-2. 近期：改善全局错误报告 UI。
-3. 中期：历史页高级功能（筛选/继续编辑/原始响应）。
-4. 中期：蒙版编辑器。
-5. 后期：Gemini 交错响应与搜索建议隔离视图（最复杂）。
-6. 持续：补齐测试覆盖。
+1. 蒙版编辑器（i18n 键已备齐，组件框架待确认是否已存在）。
+2. 历史页：原始响应查看、供应商远程文件清理按钮。
+3. xAI 参考图排序 + `<IMAGE_n>` 插入。
+4. 补充 Rust 集成测试（Mock HTTP 覆盖 SSE 流式、Batch 轮询、限流重试）。
+5. Gemini 交错响应渲染完善（目前 TaskDetailModal 已有框架，需 CSS 样式和沙箱 iframe 测试）。
