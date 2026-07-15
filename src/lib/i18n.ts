@@ -276,6 +276,13 @@ const zh = {
   imageUnit: "张",
   more: "更多",
   color: "颜色",
+  compare: "对比",
+  exitCompare: "退出对比",
+  compareRecords: "记录对比",
+  compareSubtitle: "并排查看所选记录的详情",
+  selectedCount: "已选择 {count} 条",
+  compareSelected: "对比所选",
+  duration: "耗时",
 } as const;
 
 const en: Record<keyof typeof zh, string> = {
@@ -554,6 +561,13 @@ const en: Record<keyof typeof zh, string> = {
   imageUnit: "images",
   more: "More",
   color: "Color",
+  compare: "Compare",
+  exitCompare: "Exit compare",
+  compareRecords: "Compare records",
+  compareSubtitle: "Side-by-side view of selected records",
+  selectedCount: "{count} selected",
+  compareSelected: "Compare selected",
+  duration: "Duration",
 };
 
 export type TranslationKey = keyof typeof zh;

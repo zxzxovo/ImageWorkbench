@@ -19,6 +19,7 @@ import {
   Sparkles,
   SquarePen,
   Trash2,
+  GitCompare,
 } from "lucide-solid";
 import { api } from "../lib/api";
 import type { TranslationKey } from "../lib/i18n";
@@ -32,6 +33,7 @@ import type {
 } from "../types";
 import { EmptyState, Field, IconButton, Modal, Toggle } from "./common";
 import TaskDetailModal from "./TaskDetailModal";
+import CompareModal from "./CompareModal";
 
 interface BaseProps {
   project: Project;
@@ -51,6 +53,10 @@ export function HistoryPage(props: BaseProps & {
   const [status, setStatus] = createSignal("all");
   const [model, setModel] = createSignal("all");
   const [selectedRecord, setSelectedRecord] = createSignal<HistoryRecord | null>(null);
+  const [compareMode, setCompareMode] = createSignal(false);
+  const [selectedForCompare, setSelectedForCompare] = createSignal<Set<string>>(new Set());
+  const [showCompareModal, setShowCompareModal] = createSignal(false);
+
   const records = createMemo(() => props.history
     .filter((record) => record.projectId === props.project.id)
     .filter((record) => providerId() === "all" || record.providerId === providerId())
@@ -59,11 +65,53 @@ export function HistoryPage(props: BaseProps & {
     .filter((record) => `${record.prompt} ${record.model}`.toLowerCase().includes(query().toLowerCase())));
   const projectModels = createMemo(() => [...new Set(props.history.filter((item) => item.projectId === props.project.id).map((item) => item.model))]);
 
+  const toggleCompareMode = () => {
+    setCompareMode(!compareMode());
+    setSelectedForCompare(new Set<string>());
+  };
+
+  const toggleRecordSelection = (recordId: string) => {
+    const newSet = new Set<string>(selectedForCompare());
+    if (newSet.has(recordId)) {
+      newSet.delete(recordId);
+    } else {
+      if (newSet.size < 4) {
+        newSet.add(recordId);
+      }
+    }
+    setSelectedForCompare(newSet);
+  };
+
+  const openCompareModal = () => {
+    setShowCompareModal(true);
+  };
+
+  const closeCompareModal = () => {
+    setShowCompareModal(false);
+    setCompareMode(false);
+    setSelectedForCompare(new Set<string>());
+  };
+
+  const compareRecords = createMemo(() => {
+    const ids = Array.from(selectedForCompare());
+    return records().filter((r) => ids.includes(r.id));
+  });
+
   return (
     <div class="page management-page history-page">
       <header class="page-header">
         <div><h1>{props.t("history")}</h1><p>{props.project.name}</p></div>
-        <button class="button secondary" type="button"><CalendarDays size={16} />{props.t("last30Days")}</button>
+        <div style={{ display: "flex", gap: "8px" }}>
+          <button
+            class={`button ${compareMode() ? "primary" : "secondary"}`}
+            type="button"
+            onClick={toggleCompareMode}
+          >
+            <GitCompare size={16} />
+            {compareMode() ? props.t("exitCompare") : props.t("compare")}
+          </button>
+          <button class="button secondary" type="button"><CalendarDays size={16} />{props.t("last30Days")}</button>
+        </div>
       </header>
 
       <section class="filter-bar">
@@ -88,11 +136,35 @@ export function HistoryPage(props: BaseProps & {
       <Show when={records().length > 0} fallback={<EmptyState icon={<Filter size={24} />} title={props.t("historyEmpty")} />}>
         <div class="history-table-wrap">
           <table class="history-table">
-            <thead><tr><th>{props.t("preview")}</th><th>{props.t("prompt")}</th><th>{props.t("provider")}</th><th>{props.t("model")}</th><th>{props.t("mode")}</th><th>{props.t("statusLabel")}</th><th>{props.t("date")}</th><th /></tr></thead>
+            <thead>
+              <tr>
+                <Show when={compareMode()}>
+                  <th style={{ width: "50px" }}></th>
+                </Show>
+                <th>{props.t("preview")}</th>
+                <th>{props.t("prompt")}</th>
+                <th>{props.t("provider")}</th>
+                <th>{props.t("model")}</th>
+                <th>{props.t("mode")}</th>
+                <th>{props.t("statusLabel")}</th>
+                <th>{props.t("date")}</th>
+                <th />
+              </tr>
+            </thead>
             <tbody>
               <For each={records()}>
                 {(record) => (
-                  <tr>
+                  <tr class={selectedForCompare().has(record.id) ? "is-selected" : ""}>
+                    <Show when={compareMode()}>
+                      <td>
+                        <input
+                          type="checkbox"
+                          checked={selectedForCompare().has(record.id)}
+                          disabled={!selectedForCompare().has(record.id) && selectedForCompare().size >= 4}
+                          onChange={() => toggleRecordSelection(record.id)}
+                        />
+                      </td>
+                    </Show>
                     <td><div class="history-thumb"><Show when={record.assets[0]} fallback={<ImageIcon size={18} />}><img src={record.assets[0]?.url} alt="" /></Show><Show when={record.assets.length > 1}><span>+{record.assets.length - 1}</span></Show></div></td>
                     <td><div class="history-prompt"><strong>{record.prompt}</strong><small>{record.count} {props.t("imageUnit")}{record.durationMs ? ` · ${(record.durationMs / 1000).toFixed(1)}s` : ""}</small></div></td>
                     <td>{record.providerName}</td>
@@ -101,13 +173,15 @@ export function HistoryPage(props: BaseProps & {
                     <td><span class={`status-chip status-${record.status}`}>{props.t((`status${record.status[0].toUpperCase()}${record.status.slice(1)}`) as TranslationKey)}</span></td>
                     <td>{new Date(record.createdAt).toLocaleString()}</td>
                     <td>
-                      <div class="table-actions">
-                        <IconButton label={props.t("favorite")} active={record.favorite} onClick={() => props.onToggleFavorite(record.id)}><Heart size={15} fill={record.favorite ? "currentColor" : "none"} /></IconButton>
-                        <IconButton label={props.t("retry")} onClick={() => props.onRerun(record)}><RotateCw size={15} /></IconButton>
-                        <Show when={record.interactionId}><IconButton label={props.t("continueEditing")} onClick={() => props.onContinue(record)}><SquarePen size={15} /></IconButton></Show>
-                        <IconButton label={props.t("taskDetails")} onClick={() => setSelectedRecord(record)}><MoreHorizontal size={15} /></IconButton>
-                        <IconButton label={props.t("delete")} onClick={() => props.onDelete(record.id)}><Trash2 size={15} /></IconButton>
-                      </div>
+                      <Show when={!compareMode()}>
+                        <div class="table-actions">
+                          <IconButton label={props.t("favorite")} active={record.favorite} onClick={() => props.onToggleFavorite(record.id)}><Heart size={15} fill={record.favorite ? "currentColor" : "none"} /></IconButton>
+                          <IconButton label={props.t("retry")} onClick={() => props.onRerun(record)}><RotateCw size={15} /></IconButton>
+                          <Show when={record.interactionId}><IconButton label={props.t("continueEditing")} onClick={() => props.onContinue(record)}><SquarePen size={15} /></IconButton></Show>
+                          <IconButton label={props.t("taskDetails")} onClick={() => setSelectedRecord(record)}><MoreHorizontal size={15} /></IconButton>
+                          <IconButton label={props.t("delete")} onClick={() => props.onDelete(record.id)}><Trash2 size={15} /></IconButton>
+                        </div>
+                      </Show>
                     </td>
                   </tr>
                 )}
@@ -116,7 +190,19 @@ export function HistoryPage(props: BaseProps & {
           </table>
         </div>
       </Show>
+
+      <Show when={compareMode() && selectedForCompare().size >= 2}>
+        <div class="compare-action-bar">
+          <span>{props.t("selectedCount").replace("{count}", selectedForCompare().size.toString())}</span>
+          <button class="button primary" type="button" onClick={openCompareModal}>
+            <GitCompare size={16} />
+            {props.t("compareSelected")}
+          </button>
+        </div>
+      </Show>
+
       <TaskDetailModal task={selectedRecord()} t={props.t} onClose={() => setSelectedRecord(null)} />
+      <CompareModal records={showCompareModal() ? compareRecords() : []} t={props.t} onClose={closeCompareModal} />
     </div>
   );
 }
