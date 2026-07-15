@@ -45,7 +45,7 @@
 | 功能 | 计划来源 | 状态 |
 |---|---|---|
 | 历史页对比视图（并排比较多条记录） | plan.md §界面与参数 | 未实现 |
-| 原始响应 JSON 查看入口（后端已存 `save_raw_response`，前端无查看 UI） | plan.md §界面与参数 | 部分（数据已存，缺查看入口） |
+| 原始响应 JSON 查看入口（后端已存 `save_raw_response`，前端无查看 UI） | plan.md §界面与参数 | ✅ 已完成（`raw_response` ResponsePart，TaskDetailModal 滚动 pre 块） |
 | 测试覆盖：Mock HTTP（SSE/后台轮询/Batch/限流/审核/临时 URL 下载）、Playwright 多分辨率 | plan.md §验证与交付 | 部分（7 个测试文件，19 个用例；覆盖不全） |
 
 ## 五、已修复（2026-07-16）
