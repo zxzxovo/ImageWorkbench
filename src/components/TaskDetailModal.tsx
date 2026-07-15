@@ -33,6 +33,7 @@ function PartIcon(props: { part: ResponsePart }) {
     case "remote_job": return <CloudCog size={16} />;
     case "usage": return <Sigma size={16} />;
     case "request_meta": return <Fingerprint size={16} />;
+    case "raw_response": return <FileJson2 size={16} />;
   }
 }
 
@@ -47,6 +48,7 @@ function partTitle(part: ResponsePart, t: (key: TranslationKey) => string): stri
     remote_job: t("remoteJob"),
     usage: t("usage"),
     request_meta: t("requestId"),
+    raw_response: t("saveRawResponse"),
   }[part.type];
 }
 
@@ -98,6 +100,7 @@ export default function TaskDetailModal(props: TaskDetailModalProps) {
                       <Show when={part.type === "remote_job" && part}>{(jobPart) => <div class="remote-job-row"><div><span>{props.t("remoteJob")}</span><code>{jobPart().jobId}</code></div><div><span>{props.t("statusLabel")}</span><strong>{jobPart().status}</strong></div><div><span>{props.t("provider")}</span><strong>{jobPart().provider}</strong></div><div><span>{props.t("model")}</span><strong>{jobPart().model ?? "-"}</strong></div></div>}</Show>
                       <Show when={part.type === "usage" && part}>{(usagePart) => <div class="usage-grid"><div><span>{props.t("inputTokens")}</span><strong>{usagePart().usage.inputTokens}</strong></div><div><span>{props.t("outputTokens")}</span><strong>{usagePart().usage.outputTokens}</strong></div><div><span>{props.t("thoughtTokens")}</span><strong>{usagePart().usage.thoughtTokens}</strong></div><div><span>{props.t("cachedTokens")}</span><strong>{usagePart().usage.cachedTokens}</strong></div><div><span>{props.t("totalTokens")}</span><strong>{usagePart().usage.totalTokens}</strong></div><div><span>{props.t("imageCount")}</span><strong>{usagePart().usage.generatedImages}</strong></div><Show when={usagePart().usage.imageTokens !== undefined}><div><span>{props.t("imageTokens")}</span><strong>{usagePart().usage.imageTokens}</strong></div></Show><Show when={usagePart().usage.costUsd !== undefined}><div><span>{props.t("cost")}</span><strong>${usagePart().usage.costUsd?.toFixed(4)}</strong></div></Show></div>}</Show>
                       <Show when={part.type === "request_meta" && part}>{(metaPart) => <div class="request-id-list"><div><span>{props.t("requestId")}</span><code>{metaPart().requestId}</code></div><Show when={metaPart().interactionId}><div><span>{props.t("interactionId")}</span><code>{metaPart().interactionId}</code></div></Show><Show when={metaPart().providerResponseId}><div><span>{props.t("providerResponseId")}</span><code>{metaPart().providerResponseId}</code></div></Show></div>}</Show>
+                      <Show when={part.type === "raw_response" && part}>{(rawPart) => <pre class="raw-response-json">{rawPart().json}</pre>}</Show>
                     </article>
                   )}
                 </For>

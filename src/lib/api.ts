@@ -140,6 +140,8 @@ interface RawRunRecord {
   contextSnapshot?: RawPromptContext[];
   presetSnapshot?: RawGenerationPreset;
   capabilityRegistryVersion?: string;
+  redactedRequest?: unknown;
+  redactedResponse?: unknown;
 }
 
 interface RawInputAsset {
@@ -337,6 +339,12 @@ function mapHistoryDetails(record: RawHistoryDetails): HistoryRecord {
   if (record.usage.length > 0) responseParts.push({ id: `${run.id}-usage`, type: "usage", usage });
   const requestId = run.providerRequestId ?? record.errors.find((item) => item.error.requestId)?.error.requestId;
   if (requestId) responseParts.push({ id: `${run.id}-request`, type: "request_meta", requestId });
+  if (run.redactedResponse !== null && run.redactedResponse !== undefined) {
+    const rawJson = typeof run.redactedResponse === "string"
+      ? run.redactedResponse
+      : JSON.stringify(run.redactedResponse, null, 2);
+    responseParts.push({ id: `${run.id}-raw`, type: "raw_response", json: rawJson });
+  }
   const frontendDraft = Object.fromEntries(
     Object.entries(run.request.metadata?.frontendDraft ?? {}).filter(([, value]) => value !== null && value !== undefined),
   );

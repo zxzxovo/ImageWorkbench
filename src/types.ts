@@ -304,6 +304,11 @@ export type ResponsePart =
       requestId: string;
       interactionId?: string;
       providerResponseId?: string;
+    }
+  | {
+      id: string;
+      type: "raw_response";
+      json: string;
     };
 
 export interface GenerationResult {

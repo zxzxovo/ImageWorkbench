@@ -1,9 +1,9 @@
 import { render, screen } from "@solidjs/testing-library";
 import { describe, expect, it, vi } from "vitest";
-import type { GenerationTask } from "../types";
+import type { GenerationTask, ResponsePart } from "../types";
 import TaskDetailModal from "./TaskDetailModal";
 
-function task(status: GenerationTask["status"], error?: string): GenerationTask {
+function task(status: GenerationTask["status"], error?: string, responseParts: ResponsePart[] = []): GenerationTask {
   return {
     id: "run-1",
     projectId: "project-1",
@@ -19,7 +19,7 @@ function task(status: GenerationTask["status"], error?: string): GenerationTask 
     createdAt: "2026-07-13T00:00:00.000Z",
     error,
     assets: [],
-    responseParts: [],
+    responseParts,
   };
 }
 
@@ -43,5 +43,14 @@ describe("TaskDetailModal", () => {
     ));
 
     expect(screen.getByText("noFailure")).toBeTruthy();
+  });
+
+  it("renders a raw_response part as a pre block", () => {
+    const parts: ResponsePart[] = [{ id: "raw-1", type: "raw_response", json: '{"foo":"bar"}' }];
+    render(() => (
+      <TaskDetailModal task={task("completed", undefined, parts)} t={(key) => key} onClose={vi.fn()} />
+    ));
+
+    expect(screen.getByText('{"foo":"bar"}')).toBeTruthy();
   });
 });
