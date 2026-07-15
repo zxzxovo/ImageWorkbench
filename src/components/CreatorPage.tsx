@@ -34,6 +34,7 @@ import type {
   GenerationDraft,
   GenerationMode,
   GenerationTask,
+  GeneratedAsset,
   HistoryRecord,
   Project,
   ProviderProfile,
@@ -60,6 +61,7 @@ interface CreatorPageProps {
   onToggleQueue: () => void;
   onManageProviders: () => void;
   onReveal: (path: string) => void;
+  onDownload: (asset: GeneratedAsset) => void;
 }
 
 const modeIcons: Record<GenerationMode, typeof Sparkles> = {
@@ -727,7 +729,7 @@ export default function CreatorPage(props: CreatorPageProps) {
                     <div><strong>{record.model}</strong><p>{record.prompt}</p></div>
                     <div class="result-actions">
                       <IconButton label={props.t("reveal")} onClick={() => props.onReveal(asset.filePath)}><FolderOpen size={15} /></IconButton>
-                      <IconButton label={props.t("download")}><ArrowDownToLine size={15} /></IconButton>
+                      <IconButton label={props.t("download")} onClick={() => props.onDownload(asset)}><ArrowDownToLine size={15} /></IconButton>
                       <IconButton label={props.t("taskDetails")} onClick={() => setSelectedTask(record)}><MoreHorizontal size={15} /></IconButton>
                     </div>
                   </div>

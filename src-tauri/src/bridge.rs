@@ -182,7 +182,7 @@ impl ProviderProfileDto {
             .timeout_ms
             .map(|milliseconds| milliseconds.saturating_add(999) / 1_000)
             .or(self.timeout_seconds)
-            .unwrap_or(120)
+            .unwrap_or(300)
             .clamp(1, 3_600);
         if let Some(proxy_url) = self
             .proxy_url
@@ -694,6 +694,7 @@ pub struct GenerationCommandResult {
     pub run_id: String,
     pub request_id: String,
     pub interaction_id: Option<String>,
+    pub failure_reason: Option<String>,
     #[serde(default)]
     pub assets: Vec<GeneratedAsset>,
     #[serde(default)]

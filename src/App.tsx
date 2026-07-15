@@ -13,6 +13,7 @@ import {
   Settings,
   SlidersHorizontal,
   Sparkles,
+  X,
 } from "lucide-solid";
 import appIcon from "./assets/app-icon.png";
 import CreatorPage from "./components/CreatorPage";
@@ -478,6 +479,7 @@ export default function App() {
       const assets = result.assets.map((asset) => ({ ...asset, taskId }));
       const durationMs = Math.round(performance.now() - startedAt);
       const { status: nextStatus, error: remoteError } = outcomeFromResult(result);
+      const failureReason = result.failureReason ?? remoteError;
       setTasks((items) => items.map((item) => item.id === taskId ? {
         ...item,
         status: nextStatus,
@@ -488,7 +490,7 @@ export default function App() {
         requestId: result.requestId,
         interactionId: result.interactionId,
         usage: result.usage,
-        error: remoteError,
+        error: failureReason,
       } : item));
       setHistory((items) => [{
         ...task,
@@ -501,7 +503,7 @@ export default function App() {
         requestId: result.requestId,
         interactionId: result.interactionId,
         usage: result.usage,
-        error: remoteError,
+        error: failureReason,
         draftSnapshot: requestDraft,
         contextSnapshot,
         presetSnapshot,
@@ -711,7 +713,7 @@ export default function App() {
           </div>
           <div class="topbar-spacer" />
           <Show when={api.isDemo}><span class="demo-badge" title={t("localDemoHint")}><StatusDot status="busy" />{t("localDemo")}</span></Show>
-          <Show when={backendError()}><span class="backend-error-badge" title={backendError()}><StatusDot status="offline" />{t("backendUnavailable")}</span></Show>
+          <Show when={backendError()}><button type="button" class="backend-error-badge" title={t("dismissError")} onClick={() => setBackendError("")}><StatusDot status="offline" /><span class="backend-error-text">{backendError()}</span><X size={13} /></button></Show>
           <Show when={notice()}><span class="notice-badge">{notice()}</span></Show>
           <div class="language-switch" title={t("language")}><Languages size={15} /><button type="button" class={locale() === "zh-CN" ? "is-active" : ""} onClick={() => setLocale("zh-CN")}>中</button><button type="button" class={locale() === "en-US" ? "is-active" : ""} onClick={() => setLocale("en-US")}>EN</button></div>
           <IconButton label={t("manageProviders")} onClick={() => setProviderModalOpen(true)}><SlidersHorizontal size={17} /></IconButton>
@@ -752,7 +754,20 @@ export default function App() {
                     onCancelTask={cancelTask}
                     onToggleQueue={() => void toggleQueue()}
                     onManageProviders={() => setProviderModalOpen(true)}
-                    onReveal={(path) => void api.revealPath(projectAssetPath(currentProject().storagePath, path))}
+                    onReveal={(path) => void api.revealPath(projectAssetPath(currentProject().storagePath, path)).catch((error: unknown) => {
+                      setBackendError(error instanceof Error ? error.message : String(error));
+                    })}
+                    onDownload={(asset) => {
+                      if (!asset.filePath) {
+                        setBackendError(t("noLocalFile"));
+                        return;
+                      }
+                      const sourcePath = projectAssetPath(currentProject().storagePath, asset.filePath);
+                      const suggestedName = asset.filePath.split(/[\\/]/).at(-1) || `${asset.id}.${asset.format}`;
+                      void api.exportAsset(sourcePath, suggestedName, asset.url).catch((error: unknown) => {
+                        setBackendError(error instanceof Error ? error.message : String(error));
+                      });
+                    }}
                   />
                 </Match>
                 <Match when={activeTab() === "history"}>

@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkspaceSnapshot } from "../types";
 import { api } from "./api";
 
@@ -49,5 +49,14 @@ describe("browser workspace persistence", () => {
     expect(restored?.providers[0].apiKey).toBe("");
     expect(restored?.providers[0].hasStoredSecret).toBe(true);
     expect(await api.testProvider(restored!.providers[0])).toBe(true);
+  });
+
+  it("exports a generated preview through a browser download", async () => {
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+
+    await expect(api.exportAsset("ignored", "result.png", "data:image/png;base64,AAAA")).resolves.toBe(true);
+
+    expect(click).toHaveBeenCalledOnce();
+    click.mockRestore();
   });
 });

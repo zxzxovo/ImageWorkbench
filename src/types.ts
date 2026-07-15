@@ -310,6 +310,7 @@ export interface GenerationResult {
   runId?: string;
   requestId: string;
   interactionId?: string;
+  failureReason?: string;
   assets: GeneratedAsset[];
   responseParts: ResponsePart[];
   usage: UsageSummary;

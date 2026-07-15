@@ -75,6 +75,8 @@ interface RawGenerationCommandResult {
   request_id?: string;
   interactionId?: string;
   interaction_id?: string;
+  failureReason?: string;
+  failure_reason?: string;
 }
 
 interface ImportedInputDto {
@@ -610,7 +612,15 @@ function normalizeTauriResult(raw: RawGenerationCommandResult): GenerationResult
   const usage = normalizeUsage(raw.usage, assets.length);
   if (!hasUsagePart) responseParts.push({ id: crypto.randomUUID(), type: "usage", usage });
   if (!hasRequestMetaPart) responseParts.push({ id: crypto.randomUUID(), type: "request_meta", requestId, interactionId });
-  return { runId: raw.runId ?? raw.run_id, requestId, interactionId, assets, responseParts, usage };
+  return {
+    runId: raw.runId ?? raw.run_id,
+    requestId,
+    interactionId,
+    failureReason: raw.failureReason ?? raw.failure_reason,
+    assets,
+    responseParts,
+    usage,
+  };
 }
 
 async function restoreSecrets(snapshot: WorkspaceSnapshot): Promise<WorkspaceSnapshot> {
@@ -925,12 +935,37 @@ export const api = {
 
   async revealPath(path: string): Promise<void> {
     if (!isTauriRuntime()) return;
-    try {
-      const { openPath } = await import("@tauri-apps/plugin-opener");
-      await openPath(path);
-    } catch {
-      await invokeWithFallback("reveal_path", { path }, () => undefined);
+    await invoke<void>("reveal_path", { path });
+  },
+
+  async exportAsset(sourcePath: string, suggestedName: string, previewUrl: string): Promise<boolean> {
+    if (!isTauriRuntime()) {
+      const link = document.createElement("a");
+      link.href = previewUrl;
+      link.download = suggestedName;
+      document.body.append(link);
+      link.click();
+      link.remove();
+      return true;
     }
+
+    const extension = suggestedName.split(".").at(-1)?.toLowerCase();
+    // Bring the main window to the foreground so the native save dialog is not
+    // spawned behind it (a common cause of the picker appearing to do nothing on Windows).
+    try {
+      const { getCurrentWindow } = await import("@tauri-apps/api/window");
+      await getCurrentWindow().setFocus();
+    } catch {
+      // Non-fatal: continue to open the dialog even if focusing fails.
+    }
+    const { save } = await import("@tauri-apps/plugin-dialog");
+    const destinationPath = await save({
+      defaultPath: suggestedName,
+      filters: extension ? [{ name: "Image", extensions: [extension] }] : undefined,
+    });
+    if (!destinationPath) return false;
+    await invoke<void>("export_asset", { sourcePath, destinationPath });
+    return true;
   },
 
   async testProvider(provider: ProviderProfile): Promise<boolean> {

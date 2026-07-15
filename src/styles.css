@@ -516,7 +516,17 @@ textarea::placeholder {
   color: #963f36;
   background: var(--red-soft);
   border-color: #e5c9c5;
+  cursor: pointer;
+  max-width: 420px;
 }
+
+.backend-error-badge .backend-error-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.backend-error-badge:hover { background: #f6d9d4; }
 
 .language-switch button {
   height: 22px;
@@ -1974,6 +1984,30 @@ textarea::placeholder {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+.task-detail-outcome {
+  padding: 11px 12px;
+  border: 1px solid #dfe5e3;
+  border-left: 3px solid #72a193;
+  background: #f7faf9;
+}
+
+.task-detail-outcome.is-error {
+  border-color: #ecd6d3;
+  border-left-color: var(--danger);
+  background: #fff8f7;
+}
+
+.task-detail-outcome p {
+  margin: 5px 0 0;
+  color: #3f454a;
+  font-size: 11px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.task-detail-outcome.is-error p { color: #8b3932; }
 
 .task-detail-prompt {
   padding: 12px;

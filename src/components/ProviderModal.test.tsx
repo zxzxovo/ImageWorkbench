@@ -32,6 +32,7 @@ describe("ProviderModal", () => {
     ));
 
     await fireEvent.click(screen.getByRole("button", { name: /advancedConnection/ }));
+    expect(container.querySelector<HTMLInputElement>('input[type="number"][step="1000"]')?.value).toBe("300000");
     const editor = container.querySelector<HTMLTextAreaElement>("textarea[placeholder*='my-image-model']");
     expect(editor).not.toBeNull();
 

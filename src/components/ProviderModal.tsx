@@ -44,7 +44,7 @@ function emptyProvider(kind: ProviderKind): ProviderProfile {
     organization: "",
     projectId: "",
     customHeader: "",
-    timeoutMs: 120_000,
+    timeoutMs: 300_000,
     proxyUrl: "",
     authScheme: kind === "gemini" ? "header" : "bearer",
     authHeaderName: kind === "gemini" ? "x-goog-api-key" : "Authorization",
@@ -314,7 +314,7 @@ export default function ProviderModal(props: ProviderModalProps) {
               <div class="provider-advanced-body">
                 <div class="provider-form-grid">
                   <Field label={props.t("timeoutMs")}>
-                    <input type="number" min="1000" step="1000" value={draft.timeoutMs ?? 120000} onInput={(event) => setDraft("timeoutMs", Number(event.currentTarget.value))} />
+                    <input type="number" min="1000" step="1000" value={draft.timeoutMs ?? 300000} onInput={(event) => setDraft("timeoutMs", Number(event.currentTarget.value))} />
                   </Field>
                   <Field label={props.t("proxyUrl")}>
                     <input placeholder="http://127.0.0.1:7890" value={draft.proxyUrl ?? ""} spellcheck={false} onInput={(event) => setDraft("proxyUrl", event.currentTarget.value)} />

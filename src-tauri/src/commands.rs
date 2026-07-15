@@ -335,6 +335,47 @@ pub async fn reveal_path(
 
 #[tauri::command]
 #[specta::specta]
+pub async fn export_asset(
+    state: tauri::State<'_, AppState>,
+    source_path: String,
+    destination_path: String,
+) -> CommandResult<()> {
+    let source = state
+        .validate_open_project_path(source_path.clone())
+        .await
+        .map_err(|error| {
+            tracing::warn!(%error, source_path, "export_asset: path validation failed");
+            error
+        })?;
+    if !source.is_file() {
+        tracing::warn!(source = %source.display(), "export_asset: resolved path is not a file");
+        return Err(CommandError::validation("export source is not a file"));
+    }
+
+    let destination = std::path::PathBuf::from(destination_path);
+    if destination.as_os_str().is_empty() || destination.file_name().is_none() {
+        return Err(CommandError::validation("export destination is invalid"));
+    }
+    if destination.exists() && destination.canonicalize().is_ok_and(|path| path == source) {
+        return Ok(());
+    }
+    let parent = destination
+        .parent()
+        .ok_or_else(|| CommandError::validation("export destination has no parent directory"))?;
+    if !parent.is_dir() {
+        return Err(CommandError::validation(
+            "export destination directory does not exist",
+        ));
+    }
+
+    tokio::fs::copy(&source, &destination)
+        .await
+        .map_err(|error| CommandError::new("asset_export", error.to_string()))?;
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
 pub async fn project_create(
     state: tauri::State<'_, AppState>,
     project_id: String,
@@ -1369,6 +1410,7 @@ pub fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             generate_images,
             generate_images_legacy,
             reveal_path,
+            export_asset,
             project_create,
             project_open,
             project_load_details,

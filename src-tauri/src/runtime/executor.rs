@@ -217,6 +217,7 @@ pub async fn poll_remote_tasks(
             };
             let mut sequence = project.list_outputs(&run.id).await?.len() as u32;
             let mut download_failures = 0_usize;
+            let mut failure_messages = Vec::new();
             let mut has_downloaded_content = false;
             for response in polled.outputs {
                 record_continuation_id(&mut run, &response.raw);
@@ -231,6 +232,8 @@ pub async fn poll_remote_tasks(
                 )
                 .await?;
                 download_failures += processed.failures.len();
+                failure_messages
+                    .extend(processed.failures.iter().map(|error| error.message.clone()));
                 has_downloaded_content |= response_has_content(&processed.result);
                 merge_result(&mut result, processed.result);
             }
@@ -273,6 +276,9 @@ pub async fn poll_remote_tasks(
             run.updated_at = Utc::now();
             project.upsert_job(&job).await?;
             project.upsert_run(&run).await?;
+            if !failure_messages.is_empty() {
+                result.failure_reason = Some(failure_messages.join("; "));
+            }
             finalize_result(&mut result, &run.id);
             Ok(result)
         }
@@ -477,6 +483,7 @@ async fn execute_batch(
         run_id: run.id.clone(),
         request_id: remote.id.clone(),
         interaction_id: None,
+        failure_reason: None,
         assets: Vec::new(),
         response_parts: vec![
             remote_job_part(&remote),
@@ -646,6 +653,15 @@ async fn execute_realtime(
         run.finished_at = Some(Utc::now());
     }
     project.upsert_run(run).await?;
+    if !failures.is_empty() {
+        result.failure_reason = Some(
+            failures
+                .iter()
+                .map(|error| error.message.as_str())
+                .collect::<Vec<_>>()
+                .join("; "),
+        );
+    }
     if matches!(
         run.status,
         domain::RunStatus::Failed | domain::RunStatus::Cancelled

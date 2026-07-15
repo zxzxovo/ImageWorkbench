@@ -46,7 +46,7 @@ pub struct ProviderConfig {
 }
 
 const fn default_timeout_secs() -> u64 {
-    120
+    300
 }
 
 impl ProviderConfig {

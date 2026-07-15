@@ -76,7 +76,7 @@ impl ProviderProfile {
             credential_ref: None,
             custom_headers: BTreeMap::new(),
             secret_header_refs: BTreeMap::new(),
-            timeout_ms: 120_000,
+            timeout_ms: 300_000,
             proxy_url: None,
             organization: None,
             project: None,

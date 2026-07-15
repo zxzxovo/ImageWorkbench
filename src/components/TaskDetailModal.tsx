@@ -70,6 +70,11 @@ export default function TaskDetailModal(props: TaskDetailModalProps) {
               <div><span>Date</span><strong>{new Date(task().createdAt).toLocaleString()}</strong></div>
             </section>
 
+            <section class={`task-detail-outcome ${task().error ? "is-error" : "is-success"}`}>
+              <span class="section-kicker">{props.t("failureReason")}</span>
+              <p>{task().error || (task().status === "completed" ? props.t("noFailure") : task().status === "failed" ? props.t("unknownFailure") : "-")}</p>
+            </section>
+
             <section class="task-detail-prompt">
               <span class="section-kicker">{props.t("prompt")}</span>
               <p>{task().composedPrompt}</p>
