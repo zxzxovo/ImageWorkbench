@@ -2,6 +2,17 @@
 
 ImageWorkbench is a local-first desktop workbench for generating and editing images with OpenAI, xAI Grok, Google Gemini, and OpenAI Images-compatible providers.
 
+## Changelog
+
+### v0.1.1
+- **Fix** Error messages in the top bar now show real text instead of `[object Object]` — Tauri IPC errors are properly unwrapped
+- **Fix** Provider test-connection and sync-models no longer fail instantly on first launch: the API key is passed directly instead of relying solely on a keyring round-trip
+- **Fix** API key field now shows masked dots (`••••••••••••`) after saving, confirming the key was stored
+- **Fix** History date filter button (Last 30 Days) now actually filters records; click again to reset
+- **Fix** Sidebar collapse button is clearly visible after collapsing
+- **Feat** Streaming API enabled by default for all models that support it, reducing timeout failures on slow generations
+- **Cleanup** Removed redundant settings icon from top bar, `+` button from sidebar Projects header, and New / Open Project entries from the project dropdown
+
 ## Stack
 
 - Rust 2024 and Tauri 2
