@@ -164,12 +164,12 @@ impl AppState {
         validate_identifier(project_id, "project ID")?;
         let requested_root = root.as_ref();
         if let Some(store) = self.projects.read().await.get(project_id).cloned() {
-            let expected = requested_root.canonicalize().map_err(|error| {
+            let expected = strip_extended_length_prefix(requested_root.canonicalize().map_err(|error| {
                 CommandError::new(
                     "project_path",
                     format!("cannot resolve {}: {error}", requested_root.display()),
                 )
-            })?;
+            })?);
             if store.layout().root() != expected {
                 return Err(CommandError::validation(
                     "the requested storage path does not match the open project",
