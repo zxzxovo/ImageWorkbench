@@ -1,9 +1,9 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use imageworkbench_lib::providers::create_adapter;
 use imageworkbench_lib::providers::error::ProviderErrorKind;
 use imageworkbench_lib::providers::types::*;
-use imageworkbench_lib::providers::create_adapter;
 use serde_json::json;
 use wiremock::matchers::{header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -116,7 +116,10 @@ async fn test_sse_stream_generation() {
     } else {
         // Streaming might not be fully supported - that's ok for this test
         // We've verified the mock setup is correct
-        println!("Streaming not fully supported in test environment: {:?}", result.err());
+        println!(
+            "Streaming not fully supported in test environment: {:?}",
+            result.err()
+        );
     }
 }
 
@@ -216,7 +219,11 @@ async fn test_background_polling_with_state_transitions() {
     };
 
     let batch_job = adapter.submit_batch(&submission).await;
-    assert!(batch_job.is_ok(), "Batch submission should succeed: {:?}", batch_job.as_ref().err());
+    assert!(
+        batch_job.is_ok(),
+        "Batch submission should succeed: {:?}",
+        batch_job.as_ref().err()
+    );
     let job = batch_job.unwrap();
     assert_eq!(job.id, "batch_abc123");
     assert_eq!(job.kind, RemoteJobKind::Batch);
@@ -374,9 +381,8 @@ async fn test_temporary_url_download_with_ttl() {
         0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x77, 0x53, // bit depth, color type
         0xDE, // IHDR chunk end
         0x00, 0x00, 0x00, 0x0C, 0x49, 0x44, 0x41, 0x54, // IDAT chunk
-        0x08, 0xD7, 0x63, 0xF8, 0xCF, 0xC0, 0x00, 0x00,
-        0x03, 0x01, 0x01, 0x00, 0x18, 0xDD, 0x8D, 0xB4,
-        0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, // IEND chunk
+        0x08, 0xD7, 0x63, 0xF8, 0xCF, 0xC0, 0x00, 0x00, 0x03, 0x01, 0x01, 0x00, 0x18, 0xDD, 0x8D,
+        0xB4, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, // IEND chunk
         0xAE, 0x42, 0x60, 0x82,
     ];
 
@@ -410,7 +416,10 @@ async fn test_temporary_url_download_with_ttl() {
     let response = result.unwrap();
 
     // Verify we got output
-    assert!(!response.outputs.is_empty(), "Should have at least one output");
+    assert!(
+        !response.outputs.is_empty(),
+        "Should have at least one output"
+    );
 
     // Check if it's an image output
     if let OutputPart::Image {
@@ -429,13 +438,20 @@ async fn test_temporary_url_download_with_ttl() {
 
         // Download the actual file from the source URL
         let download_result = adapter.download_asset(source).await;
-        assert!(download_result.is_ok(), "Download should succeed: {:?}", download_result.err());
+        assert!(
+            download_result.is_ok(),
+            "Download should succeed: {:?}",
+            download_result.err()
+        );
         let downloaded = download_result.unwrap();
 
         // Verify downloaded data
         assert_eq!(downloaded.bytes.len(), png_data.len());
         assert_eq!(downloaded.mime_type, Some("image/png".to_string()));
-        assert!(downloaded.bytes.starts_with(&[0x89, 0x50, 0x4E, 0x47]), "Should be valid PNG");
+        assert!(
+            downloaded.bytes.starts_with(&[0x89, 0x50, 0x4E, 0x47]),
+            "Should be valid PNG"
+        );
     } else {
         panic!("Expected image output, got: {:?}", response.outputs[0]);
     }
