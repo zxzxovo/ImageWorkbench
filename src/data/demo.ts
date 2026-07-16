@@ -284,7 +284,7 @@ export const initialDraft: GenerationDraft = {
   webSearch: false,
   imageSearch: false,
   includeText: false,
-  stream: false,
+  stream: true,
   backgroundTask: false,
   batch: false,
   partialImages: 0,
