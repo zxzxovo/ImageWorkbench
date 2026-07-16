@@ -9,7 +9,6 @@ import {
   Languages,
   Library,
   Menu,
-  Plus,
   Settings,
   SlidersHorizontal,
   Sparkles,
@@ -27,7 +26,7 @@ import ProjectModal from "./components/ProjectModal";
 import ProviderModal from "./components/ProviderModal";
 import { IconButton, StatusDot } from "./components/common";
 import { demoWorkspace, initialDraft, starterProviders } from "./data/demo";
-import { api } from "./lib/api";
+import { api, formatError } from "./lib/api";
 import { translate, type TranslationKey } from "./lib/i18n";
 import { getModelCapabilities, getProviderAccent } from "./lib/models";
 import { normalizeDraftForModel } from "./lib/prompt";
@@ -147,7 +146,7 @@ export default function App() {
         setHistory((items) => items.map(applyResult));
       }
     } catch (error) {
-      setBackendError(error instanceof Error ? error.message : String(error));
+      setBackendError(formatError(error));
     } finally {
       remotePollsInFlight.delete(projectId);
     }
@@ -171,7 +170,7 @@ export default function App() {
     try {
       setQueuePaused(await api.queueStatus());
     } catch (error) {
-      setBackendError(error instanceof Error ? error.message : String(error));
+      setBackendError(formatError(error));
     }
     try {
       const saved = await api.loadWorkspace();
@@ -198,7 +197,7 @@ export default function App() {
               }));
               loaded.forEach((entry) => mergePortableHistory(entry.details.history));
             })
-            .catch((error: unknown) => setBackendError(error instanceof Error ? error.message : String(error)));
+            .catch((error: unknown) => setBackendError(formatError(error)));
         }
         void pollProjectRemoteTasks(saved.activeProjectId);
         if (!api.isDemo && saved.projects.length === 0) setProjectModalOpen(true);
@@ -207,7 +206,7 @@ export default function App() {
       }
       setHydrated(true);
     } catch (error) {
-      setBackendError(error instanceof Error ? error.message : String(error));
+      setBackendError(formatError(error));
     }
   });
 
@@ -221,7 +220,7 @@ export default function App() {
       history: history(),
     };
     void api.saveWorkspace(snapshot).catch((error: unknown) => {
-      setBackendError(error instanceof Error ? error.message : String(error));
+      setBackendError(formatError(error));
     });
   });
 
@@ -263,7 +262,7 @@ export default function App() {
         return task;
       }));
     }).then((unlisten) => { unlistenGenerationEvents = unlisten; }).catch((error: unknown) => {
-      setBackendError(error instanceof Error ? error.message : String(error));
+      setBackendError(formatError(error));
     });
   });
   onCleanup(() => unlistenGenerationEvents?.());
@@ -291,7 +290,7 @@ export default function App() {
         loadedProjectIds.add(projectId);
         setProjects((items) => items.map((item) => item.id === projectId ? { ...item, descriptions: details.descriptions, presets: details.presets } : item));
         mergePortableHistory(details.history);
-      }).catch((error: unknown) => setBackendError(error instanceof Error ? error.message : String(error)));
+      }).catch((error: unknown) => setBackendError(formatError(error)));
     }
     void pollProjectRemoteTasks(projectId);
   };
@@ -309,7 +308,7 @@ export default function App() {
     try {
       if (!(await api.deleteProvider(providerId))) return false;
     } catch (error) {
-      setBackendError(error instanceof Error ? error.message : String(error));
+      setBackendError(formatError(error));
       return false;
     }
     const remaining = providers().filter((item) => item.id !== providerId);
@@ -319,7 +318,7 @@ export default function App() {
     if (dependentProjects.length > 0) {
       if (fallback) {
         void Promise.all(dependentProjects.map((item) => api.remapProjectProvider(item.id, providerId, fallback.id)))
-          .catch((error: unknown) => setBackendError(error instanceof Error ? error.message : String(error)));
+          .catch((error: unknown) => setBackendError(formatError(error)));
       }
       setProjects((items) => items.map((item) => item.settings.defaultProviderId === providerId ? {
         ...item,
@@ -404,7 +403,7 @@ export default function App() {
     void Promise.all([
       ...deleted.map((item) => api.deletePromptContext(currentProject.id, item.id)),
       ...nextDescriptions.map((item, index) => api.upsertPromptContext(currentProject.id, item, index)),
-    ]).catch((error: unknown) => setBackendError(error instanceof Error ? error.message : String(error)));
+    ]).catch((error: unknown) => setBackendError(formatError(error)));
     updateActiveProject((item) => ({ ...item, descriptions: nextDescriptions, updatedAt: new Date().toISOString() }));
   };
 
@@ -415,7 +414,7 @@ export default function App() {
     void Promise.all([
       ...deleted.map((item) => api.deleteGenerationPreset(currentProject.id, item.id)),
       ...nextPresets.map((item) => api.upsertGenerationPreset(currentProject.id, item)),
-    ]).catch((error: unknown) => setBackendError(error instanceof Error ? error.message : String(error)));
+    ]).catch((error: unknown) => setBackendError(formatError(error)));
     updateActiveProject((item) => ({ ...item, presets: nextPresets, updatedAt: new Date().toISOString() }));
   };
 
@@ -513,7 +512,7 @@ export default function App() {
     } catch (error) {
       const message = cancelledTaskIds.has(taskId)
         ? "Cancelled"
-        : error instanceof Error ? error.message : String(error);
+        : formatError(error);
       setTasks((items) => items.map((item) => item.id === taskId ? { ...item, status: "failed", error: message } : item));
       setHistory((items) => [{
         ...task,
@@ -547,7 +546,7 @@ export default function App() {
       }
     } catch (error) {
       setQueuePaused(previous);
-      setBackendError(error instanceof Error ? error.message : String(error));
+      setBackendError(formatError(error));
     } finally {
       setQueueControlBusy(false);
     }
@@ -559,7 +558,7 @@ export default function App() {
     setTasks((items) => items.map((item) => item.id === taskId ? { ...item, status: "failed", error: "Cancelled", progress: item.progress } : item));
     const taskProjectId = tasks().find((item) => item.id === taskId)?.projectId ?? project()?.id;
     void api.cancelRun(taskId, taskProjectId).catch((error: unknown) => {
-      setBackendError(error instanceof Error ? error.message : String(error));
+      setBackendError(formatError(error));
     });
   };
 
@@ -571,7 +570,7 @@ export default function App() {
       if (result.deletedRuns > 0) setHistory((items) => items.filter((item) => item.id !== recordId));
       if (result.failures.length > 0) setBackendError(result.failures.map((item) => item.message).join("; "));
     } catch (error) {
-      setBackendError(error instanceof Error ? error.message : String(error));
+      setBackendError(formatError(error));
     }
   };
 
@@ -581,7 +580,7 @@ export default function App() {
       if (result.deletedRuns > 0 || api.isDemo) setHistory((items) => items.filter((item) => item.projectId !== projectId));
       if (result.failures.length > 0) setBackendError(result.failures.map((item) => item.message).join("; "));
     } catch (error) {
-      setBackendError(error instanceof Error ? error.message : String(error));
+      setBackendError(formatError(error));
     }
   };
 
@@ -665,7 +664,7 @@ export default function App() {
         </div>
 
         <Show when={!sidebarCollapsed()}>
-          <div class="sidebar-section-label"><span>{t("projects")}</span><IconButton label={t("newProject")} onClick={() => setProjectModalOpen(true)}><Plus size={15} /></IconButton></div>
+          <div class="sidebar-section-label"><span>{t("projects")}</span></div>
         </Show>
         <nav class="project-list">
           <For each={projects()}>
@@ -705,9 +704,6 @@ export default function App() {
             <Show when={projectMenuOpen()}>
               <div class="project-menu">
                 <For each={projects()}>{(item) => <button type="button" class={item.id === activeProjectId() ? "is-active" : ""} onClick={() => selectProject(item.id)}><span class="project-color" style={{ "background-color": item.color }} /><span><strong>{item.name}</strong><small>{item.storagePath}</small></span></button>}</For>
-                <div class="menu-separator" />
-                <button type="button" onClick={() => setProjectModalOpen(true)}><FolderPlus size={16} /><span>{t("newProject")}</span></button>
-                <button type="button" onClick={openProject}><FolderOpen size={16} /><span>{t("openProject")}</span></button>
               </div>
             </Show>
           </div>
@@ -717,7 +713,6 @@ export default function App() {
           <Show when={notice()}><span class="notice-badge">{notice()}</span></Show>
           <div class="language-switch" title={t("language")}><Languages size={15} /><button type="button" class={locale() === "zh-CN" ? "is-active" : ""} onClick={() => setLocale("zh-CN")}>中</button><button type="button" class={locale() === "en-US" ? "is-active" : ""} onClick={() => setLocale("en-US")}>EN</button></div>
           <IconButton label={t("manageProviders")} onClick={() => setProviderModalOpen(true)}><SlidersHorizontal size={17} /></IconButton>
-          <IconButton label={t("settings")} active={activeTab() === "project-settings"} onClick={() => setActiveTab("project-settings")}><Settings size={17} /></IconButton>
         </header>
 
         <nav class="tabbar">
@@ -755,7 +750,7 @@ export default function App() {
                     onToggleQueue={() => void toggleQueue()}
                     onManageProviders={() => setProviderModalOpen(true)}
                     onReveal={(path) => void api.revealPath(projectAssetPath(currentProject().storagePath, path)).catch((error: unknown) => {
-                      setBackendError(error instanceof Error ? error.message : String(error));
+                      setBackendError(formatError(error));
                     })}
                     onDownload={(asset) => {
                       if (!asset.filePath) {
@@ -765,7 +760,7 @@ export default function App() {
                       const sourcePath = projectAssetPath(currentProject().storagePath, asset.filePath);
                       const suggestedName = asset.filePath.split(/[\\/]/).at(-1) || `${asset.id}.${asset.format}`;
                       void api.exportAsset(sourcePath, suggestedName, asset.url).catch((error: unknown) => {
-                        setBackendError(error instanceof Error ? error.message : String(error));
+                        setBackendError(formatError(error));
                       });
                     }}
                   />

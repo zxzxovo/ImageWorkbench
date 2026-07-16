@@ -412,6 +412,17 @@ function isTauriRuntime(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
+export function formatError(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (error && typeof error === "object") {
+    const obj = error as Record<string, unknown>;
+    if (typeof obj.message === "string" && obj.message) return obj.message;
+    if (typeof obj.code === "string") return `Error [${obj.code}]`;
+    try { return JSON.stringify(error); } catch { /* ignore */ }
+  }
+  return String(error);
+}
+
 async function invokeWithFallback<T>(
   command: string,
   args: Record<string, unknown>,

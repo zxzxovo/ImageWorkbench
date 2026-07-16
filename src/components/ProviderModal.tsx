@@ -2,7 +2,7 @@ import { For, Show, createEffect, createSignal } from "solid-js";
 import { createStore } from "solid-js/store";
 import { Bot, Boxes, Check, ChevronDown, Gem, KeyRound, Plus, RefreshCw, Save, Server, Trash2, Zap } from "lucide-solid";
 import type { TranslationKey } from "../lib/i18n";
-import { api } from "../lib/api";
+import { api, formatError } from "../lib/api";
 import { getProviderAccent, parseCapabilityOverridesJson, providerDefaultModels } from "../lib/models";
 import type { ProviderKind, ProviderProfile } from "../types";
 import { Field, IconButton, Modal, StatusDot, Toggle } from "./common";
@@ -83,6 +83,9 @@ export default function ProviderModal(props: ProviderModalProps) {
   const [syncing, setSyncing] = createSignal(false);
   const [advancedOpen, setAdvancedOpen] = createSignal(false);
   const [formError, setFormError] = createSignal("");
+  // Track the raw API key the user has typed in this session so test/sync can
+  // pass it directly to the backend without relying on a keyring round-trip.
+  const [pendingApiKey, setPendingApiKey] = createSignal("");
 
   const loadProvider = (provider: ProviderProfile) => {
     setIsNew(false);
@@ -91,6 +94,7 @@ export default function ProviderModal(props: ProviderModalProps) {
     setTestState("idle");
     setAdvancedOpen(false);
     setFormError("");
+    setPendingApiKey("");
   };
 
   let modalWasOpen = false;
@@ -114,6 +118,7 @@ export default function ProviderModal(props: ProviderModalProps) {
     setTestState("idle");
     setAdvancedOpen(false);
     setFormError("");
+    setPendingApiKey("");
   };
 
   const prepareDraft = async (): Promise<ProviderProfile> => {
@@ -170,23 +175,30 @@ export default function ProviderModal(props: ProviderModalProps) {
 
   const testConnection = async () => {
     setTestState("testing");
+    setFormError("");
     try {
       const provider = await prepareDraft();
-      setTestState((await api.testProvider(provider)) ? "success" : "failure");
-    } catch {
+      // Pass the pending key directly so the backend doesn't need a keyring
+      // round-trip, which can fail on some Windows configurations.
+      const providerForTest = pendingApiKey() ? { ...provider, apiKey: pendingApiKey() } : provider;
+      setTestState((await api.testProvider(providerForTest)) ? "success" : "failure");
+    } catch (error) {
       setTestState("failure");
+      setFormError(formatError(error));
     }
   };
 
   const syncModels = async () => {
     setSyncing(true);
+    setFormError("");
     try {
       const provider = await prepareDraft();
-      const models = await api.syncModels(provider);
+      const providerForSync = pendingApiKey() ? { ...provider, apiKey: pendingApiKey() } : provider;
+      const models = await api.syncModels(providerForSync);
       setDraft("models", models);
       setDraft("lastSyncedAt", new Date().toISOString());
     } catch (error) {
-      setFormError(error instanceof Error ? error.message : String(error));
+      setFormError(formatError(error));
     } finally {
       setSyncing(false);
     }
@@ -280,7 +292,23 @@ export default function ProviderModal(props: ProviderModalProps) {
               <input value={draft.baseUrl} spellcheck={false} onInput={(event) => setDraft("baseUrl", event.currentTarget.value)} />
             </Field>
             <Field label={props.t("apiKey")} required class="span-2">
-              <input type="password" value={draft.apiKey} autocomplete="off" spellcheck={false} placeholder={draft.hasStoredSecret ? props.t("credentialSaved") : ""} onInput={(event) => setDraft("apiKey", event.currentTarget.value)} />
+              <input
+                type="password"
+                value={draft.hasStoredSecret && !draft.apiKey && !pendingApiKey() ? "••••••••••••" : draft.apiKey}
+                autocomplete="off"
+                spellcheck={false}
+                placeholder={draft.hasStoredSecret ? props.t("credentialSaved") : ""}
+                onFocus={(event) => {
+                  if (draft.hasStoredSecret && !draft.apiKey && !pendingApiKey()) {
+                    event.currentTarget.value = "";
+                  }
+                }}
+                onInput={(event) => {
+                  const value = event.currentTarget.value;
+                  setDraft("apiKey", value);
+                  setPendingApiKey(value);
+                }}
+              />
             </Field>
             <Show when={draft.kind === "gemini"}>
               <Field label={props.t("apiVersion")}>
