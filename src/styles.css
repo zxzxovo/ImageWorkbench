@@ -345,6 +345,24 @@ textarea::placeholder {
 
 .sidebar-collapsed .sidebar-actions button > span { display: none; }
 
+.sidebar-collapsed .brand-row {
+  justify-content: center;
+  padding: 0 10px;
+}
+
+.sidebar-collapsed .brand-row .brand-mark {
+  display: none;
+}
+
+.sidebar-collapsed .brand-row .icon-button {
+  width: 36px;
+  height: 36px;
+  color: var(--text-primary);
+  background: var(--surface-raised, #f0f2f3);
+  border-radius: 8px;
+  opacity: 1;
+}
+
 .sidebar-spacer {
   flex: 1;
 }

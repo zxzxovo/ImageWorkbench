@@ -52,17 +52,26 @@ export function HistoryPage(props: BaseProps & {
   const [providerId, setProviderId] = createSignal("all");
   const [status, setStatus] = createSignal("all");
   const [model, setModel] = createSignal("all");
+  const [dateFilter, setDateFilter] = createSignal<"all" | "30d" | "7d">("all");
   const [selectedRecord, setSelectedRecord] = createSignal<HistoryRecord | null>(null);
   const [compareMode, setCompareMode] = createSignal(false);
   const [selectedForCompare, setSelectedForCompare] = createSignal<Set<string>>(new Set());
   const [showCompareModal, setShowCompareModal] = createSignal(false);
 
-  const records = createMemo(() => props.history
-    .filter((record) => record.projectId === props.project.id)
-    .filter((record) => providerId() === "all" || record.providerId === providerId())
-    .filter((record) => status() === "all" || record.status === status())
-    .filter((record) => model() === "all" || record.model === model())
-    .filter((record) => `${record.prompt} ${record.model}`.toLowerCase().includes(query().toLowerCase())));
+  const records = createMemo(() => {
+    const cutoff = dateFilter() === "30d"
+      ? new Date(Date.now() - 30 * 86_400_000)
+      : dateFilter() === "7d"
+      ? new Date(Date.now() - 7 * 86_400_000)
+      : null;
+    return props.history
+      .filter((record) => record.projectId === props.project.id)
+      .filter((record) => !cutoff || new Date(record.createdAt) >= cutoff)
+      .filter((record) => providerId() === "all" || record.providerId === providerId())
+      .filter((record) => status() === "all" || record.status === status())
+      .filter((record) => model() === "all" || record.model === model())
+      .filter((record) => `${record.prompt} ${record.model}`.toLowerCase().includes(query().toLowerCase()));
+  });
   const projectModels = createMemo(() => [...new Set(props.history.filter((item) => item.projectId === props.project.id).map((item) => item.model))]);
 
   const toggleCompareMode = () => {
@@ -110,7 +119,14 @@ export function HistoryPage(props: BaseProps & {
             <GitCompare size={16} />
             {compareMode() ? props.t("exitCompare") : props.t("compare")}
           </button>
-          <button class="button secondary" type="button"><CalendarDays size={16} />{props.t("last30Days")}</button>
+          <button
+            class={`button ${dateFilter() !== "all" ? "primary" : "secondary"}`}
+            type="button"
+            onClick={() => setDateFilter((f) => f === "30d" ? "all" : "30d")}
+          >
+            <CalendarDays size={16} />
+            {dateFilter() === "30d" ? `${props.t("last30Days")} ✓` : props.t("last30Days")}
+          </button>
         </div>
       </header>
 
