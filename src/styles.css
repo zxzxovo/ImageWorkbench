@@ -536,6 +536,7 @@ textarea::placeholder {
   border-color: #e5c9c5;
   cursor: pointer;
   max-width: 420px;
+  position: relative;
 }
 
 .backend-error-badge .backend-error-text {
@@ -545,6 +546,43 @@ textarea::placeholder {
 }
 
 .backend-error-badge:hover { background: #f6d9d4; }
+
+.backend-error-close {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 2px;
+  color: inherit;
+  background: none;
+  border: none;
+  cursor: pointer;
+  opacity: 0.7;
+  flex-shrink: 0;
+}
+.backend-error-close:hover { opacity: 1; }
+
+.error-detail-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 200;
+  background: #fff;
+  border: 1px solid #e5c9c5;
+  border-radius: 6px;
+  padding: 10px 12px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+  max-width: min(560px, calc(100vw - 32px));
+}
+
+.error-detail-text {
+  margin: 0;
+  font-size: 12px;
+  font-family: var(--font-mono, monospace);
+  color: #963f36;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 300px;
+  overflow-y: auto;
+}
 
 .language-switch button {
   height: 22px;

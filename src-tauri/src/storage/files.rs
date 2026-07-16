@@ -12,6 +12,20 @@ use super::{StorageError, StorageResult};
 
 const INTERNAL_DIRECTORY: &str = ".imageworkbench";
 
+/// Strips the `\\?\` extended-length path prefix that Rust's `canonicalize()`
+/// adds on Windows, returning a plain Win32 path usable by all APIs and
+/// storable without confusing the frontend path-join logic.
+pub fn strip_extended_length_prefix(path: PathBuf) -> PathBuf {
+    #[cfg(target_os = "windows")]
+    {
+        let s = path.to_string_lossy();
+        if let Some(stripped) = s.strip_prefix(r"\\?\") {
+            return PathBuf::from(stripped.to_owned());
+        }
+    }
+    path
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProjectLayout {
     root: PathBuf,
@@ -27,14 +41,14 @@ impl ProjectLayout {
             )));
         }
         fs::create_dir_all(root)?;
-        let root = root.canonicalize()?;
+        let root = strip_extended_length_prefix(root.canonicalize()?);
         let layout = Self { root };
         layout.ensure_directories()?;
         Ok(layout)
     }
 
     pub fn open(root: impl AsRef<Path>) -> StorageResult<Self> {
-        let root = root.as_ref().canonicalize()?;
+        let root = strip_extended_length_prefix(root.as_ref().canonicalize()?);
         if !root.is_dir() {
             return Err(StorageError::InvalidProject(format!(
                 "{} is not a directory",

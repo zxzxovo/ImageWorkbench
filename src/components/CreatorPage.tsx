@@ -1,4 +1,4 @@
-import { For, Show, createMemo, createSignal } from "solid-js";
+import { For, Show, createMemo, createSignal, onMount, onCleanup } from "solid-js";
 import type { SetStoreFunction } from "solid-js/store";
 import {
   ArrowDownToLine,
@@ -124,7 +124,21 @@ export default function CreatorPage(props: CreatorPageProps) {
     props.setDraft("references", (items) => [...items, reference]);
   };
 
-  const addFiles = (files: FileList | null) => {
+  // Allow pasting images directly from the clipboard into the reference list.
+  onMount(() => {
+    const handlePaste = (event: ClipboardEvent) => {
+      const items = Array.from(event.clipboardData?.items ?? []);
+      const imageFiles = items
+        .filter((item) => item.type.startsWith("image/"))
+        .map((item) => item.getAsFile())
+        .filter((f): f is File => f !== null);
+      if (imageFiles.length > 0) addFiles(imageFiles);
+    };
+    window.addEventListener("paste", handlePaste);
+    onCleanup(() => window.removeEventListener("paste", handlePaste));
+  });
+
+  const addFiles = (files: FileList | File[] | null) => {
     if (!files) return;
     const remaining = Math.max(0, capabilities().maxReferences - props.draft.references.length);
     Array.from(files).slice(0, remaining).forEach((file) => {

@@ -59,9 +59,17 @@ const tabKeys: Record<WorkspaceTab, TranslationKey> = {
 
 const CAPABILITY_REGISTRY_VERSION = "2026-07-12";
 
+function stripExtendedLengthPrefix(p: string): string {
+  // Rust's canonicalize() on Windows prefixes paths with \\?\ — strip it so
+  // Win32 APIs and path joins work correctly with plain drive-letter paths.
+  return p.replace(/^\\\\\?\\/, "");
+}
+
 function projectAssetPath(projectRoot: string, path: string): string {
-  if (/^(?:[A-Za-z]:[\\/]|\/)/.test(path) || /^https?:\/\//i.test(path)) return path;
-  return `${projectRoot.replace(/[\\/]+$/, "")}/${path.replace(/^[\\/]+/, "")}`;
+  const root = stripExtendedLengthPrefix(projectRoot);
+  const p = stripExtendedLengthPrefix(path);
+  if (/^(?:[A-Za-z]:[\\/]|\/)/.test(p) || /^https?:\/\//i.test(p)) return p;
+  return `${root.replace(/[\\/]+$/, "")}/${p.replace(/^[\\/]+/, "")}`;
 }
 
 export default function App() {
@@ -90,6 +98,7 @@ export default function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = createSignal(false);
   const [hydrated, setHydrated] = createSignal(false);
   const [backendError, setBackendError] = createSignal("");
+  const [errorDetailOpen, setErrorDetailOpen] = createSignal(false);
   const [notice, setNotice] = createSignal("");
   const [queuePaused, setQueuePaused] = createSignal(false);
   const [queueControlBusy, setQueueControlBusy] = createSignal(false);
@@ -709,7 +718,23 @@ export default function App() {
           </div>
           <div class="topbar-spacer" />
           <Show when={api.isDemo}><span class="demo-badge" title={t("localDemoHint")}><StatusDot status="busy" />{t("localDemo")}</span></Show>
-          <Show when={backendError()}><button type="button" class="backend-error-badge" title={t("dismissError")} onClick={() => setBackendError("")}><StatusDot status="offline" /><span class="backend-error-text">{backendError()}</span><X size={13} /></button></Show>
+          <Show when={backendError()}>
+            <span class="backend-error-badge" onClick={() => setErrorDetailOpen((v) => !v)}>
+              <StatusDot status="offline" />
+              <span class="backend-error-text">{backendError()}</span>
+              <button
+                type="button"
+                class="backend-error-close"
+                title={t("dismissError")}
+                onClick={(e) => { e.stopPropagation(); setBackendError(""); setErrorDetailOpen(false); }}
+              ><X size={13} /></button>
+            </span>
+            <Show when={errorDetailOpen()}>
+              <div class="error-detail-popover">
+                <pre class="error-detail-text">{backendError()}</pre>
+              </div>
+            </Show>
+          </Show>
           <Show when={notice()}><span class="notice-badge">{notice()}</span></Show>
           <div class="language-switch" title={t("language")}><Languages size={15} /><button type="button" class={locale() === "zh-CN" ? "is-active" : ""} onClick={() => setLocale("zh-CN")}>中</button><button type="button" class={locale() === "en-US" ? "is-active" : ""} onClick={() => setLocale("en-US")}>EN</button></div>
           <IconButton label={t("manageProviders")} onClick={() => setProviderModalOpen(true)}><SlidersHorizontal size={17} /></IconButton>

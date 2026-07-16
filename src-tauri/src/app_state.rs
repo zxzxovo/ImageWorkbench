@@ -9,7 +9,7 @@ use tokio_util::sync::CancellationToken;
 use crate::bridge::{CommandError, CommandResult, ProviderProfileDto};
 use crate::domain::ProjectSummary;
 use crate::security::{CredentialKey, Keyring, KeyringError, SystemKeyring};
-use crate::storage::{GlobalStore, ProjectStore};
+use crate::storage::{GlobalStore, ProjectStore, strip_extended_length_prefix};
 
 const DEFAULT_PROVIDER_CONCURRENCY: usize = 2;
 
@@ -286,12 +286,14 @@ impl AppState {
         &self,
         path: impl AsRef<Path>,
     ) -> CommandResult<PathBuf> {
-        let canonical = path.as_ref().canonicalize().map_err(|error| {
-            CommandError::new(
-                "invalid_path",
-                format!("cannot resolve {}: {error}", path.as_ref().display()),
-            )
-        })?;
+        let canonical = strip_extended_length_prefix(
+            path.as_ref().canonicalize().map_err(|error| {
+                CommandError::new(
+                    "invalid_path",
+                    format!("cannot resolve {}: {error}", path.as_ref().display()),
+                )
+            })?,
+        );
         let roots = self
             .projects
             .read()

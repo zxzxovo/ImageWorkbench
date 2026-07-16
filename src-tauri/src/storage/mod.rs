@@ -7,6 +7,7 @@ mod project;
 pub use error::{StorageError, StorageResult};
 pub use files::{
     ProjectLayout, StoredFile, atomic_write_new, import_input_file, sha256_bytes, sha256_file,
+    strip_extended_length_prefix,
 };
 pub use global::GlobalStore;
 pub use project::{
