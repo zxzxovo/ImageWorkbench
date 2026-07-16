@@ -91,6 +91,8 @@ const draft: GenerationDraft = {
   publicFileUrl: false,
   ttlSeconds: 3600,
   customJson: "{}",
+  outputFilename: "",
+  flatOutput: false,
 };
 
 describe("composePrompt", () => {

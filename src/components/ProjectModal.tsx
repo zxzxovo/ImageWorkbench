@@ -56,6 +56,8 @@ export default function ProjectModal(props: ProjectModalProps) {
         namingPattern: "{date}_{model}_{index}",
         defaultProviderId: provider?.id ?? "",
         defaultModel: provider?.models[0] ?? "",
+        flatOutput: false,
+        defaultStream: null,
       },
     });
   };
