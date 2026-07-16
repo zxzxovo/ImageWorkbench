@@ -454,6 +454,8 @@ export default function App() {
       ...draft,
       size: draft.size === "custom" ? `${draft.customWidth}x${draft.customHeight}` : draft.size,
       references: [...draft.references],
+      // Project-level flatOutput flows into every request; per-image draft.flatOutput can override.
+      flatOutput: draft.flatOutput || currentProject.settings.flatOutput,
     };
     const contextSnapshot = replayContexts ?? (currentProject.settings.useCommonDescriptions
       ? currentProject.descriptions.filter((item) => item.enabled && item.content.trim())

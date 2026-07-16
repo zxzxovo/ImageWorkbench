@@ -503,6 +503,7 @@ pub struct ProjectSettingsDto {
     pub naming_pattern: String,
     pub default_provider_id: String,
     pub default_model: String,
+    #[serde(default)]
     pub flat_output: bool,
     #[serde(default)]
     pub default_stream: Option<bool>,
