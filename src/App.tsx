@@ -6,6 +6,7 @@ import {
   FolderOpen,
   FolderPlus,
   History,
+  Images,
   Languages,
   Library,
   Menu,
@@ -21,6 +22,7 @@ import {
   HistoryPage,
   PresetsPage,
   ProjectSettingsPage,
+  ResultsPage,
 } from "./components/ManagementPages";
 import ProjectModal from "./components/ProjectModal";
 import ProviderModal from "./components/ProviderModal";
@@ -47,6 +49,7 @@ const tabIcons: Record<WorkspaceTab, typeof Sparkles> = {
   descriptions: Library,
   presets: SlidersHorizontal,
   "project-settings": Settings,
+  results: Images,
 };
 
 const tabKeys: Record<WorkspaceTab, TranslationKey> = {
@@ -55,6 +58,7 @@ const tabKeys: Record<WorkspaceTab, TranslationKey> = {
   descriptions: "descriptions",
   presets: "presets",
   "project-settings": "projectSettings",
+  results: "allResults",
 };
 
 const CAPABILITY_REGISTRY_VERSION = "2026-07-12";
@@ -116,8 +120,15 @@ export default function App() {
 
   const setDraftProviderModel = (provider: ProviderProfile | undefined, preferredModel: string, overrides: Partial<typeof draft> = {}) => {
     const model = provider?.models.includes(preferredModel) ? preferredModel : provider?.models[0] ?? "";
+    const capabilities = getModelCapabilities(provider, model);
     const candidate = { ...draft, ...overrides, providerId: provider?.id ?? "", model, references: [...(overrides.references ?? draft.references)] };
-    setDraft({ ...normalizeDraftForModel(candidate, getModelCapabilities(provider, model)) });
+    const normalized = normalizeDraftForModel(candidate, capabilities);
+    // Resolve stream default: project setting > provider setting > model capability
+    const currentProject = project();
+    const resolvedStream = currentProject?.settings.defaultStream
+      ?? provider?.defaultStream
+      ?? capabilities.supportsStreaming;
+    setDraft({ ...normalized, stream: resolvedStream as boolean });
   };
 
   const outcomeFromResult = (result: { responseParts: HistoryRecord["responseParts"] }): { status: GenerationTask["status"]; error?: string } => {
@@ -383,6 +394,8 @@ export default function App() {
         namingPattern: "{date}_{model}_{index}",
         defaultProviderId: provider?.id ?? "",
         defaultModel,
+        flatOutput: false,
+        defaultStream: null,
       },
     };
     setProjects((items) => items.some((item) => item.id === openedProject.id)
@@ -583,6 +596,19 @@ export default function App() {
     }
   };
 
+  const deleteFailedHistory = async (projectId: string) => {
+    const failed = history().filter((item) => item.projectId === projectId && item.status === "failed");
+    for (const record of failed) {
+      try {
+        const result = await api.deleteHistory(record.projectId, record.id);
+        if (result.deletedRuns > 0) setHistory((items) => items.filter((item) => item.id !== record.id));
+      } catch (error) {
+        setBackendError(formatError(error));
+        break;
+      }
+    }
+  };
+
   const clearProjectHistory = async (projectId: string) => {
     try {
       const result = await api.clearHistory(projectId);
@@ -661,7 +687,7 @@ export default function App() {
     setActiveTab("create");
   };
 
-  const tabItems: WorkspaceTab[] = ["create", "history", "descriptions", "presets", "project-settings"];
+  const tabItems: WorkspaceTab[] = ["create", "results", "history", "descriptions", "presets", "project-settings"];
 
   return (
     <main class={`app-shell ${sidebarCollapsed() ? "sidebar-collapsed" : ""}`}>
@@ -800,6 +826,23 @@ export default function App() {
                     onContinue={(record) => void continueEditing(record)}
                     onToggleFavorite={(recordId) => setHistory((items) => items.map((item) => item.id === recordId ? { ...item, favorite: !item.favorite } : item))}
                     onDelete={(recordId) => void deleteHistoryRecord(recordId)}
+                    onDeleteFailed={() => void deleteFailedHistory(currentProject().id)}
+                  />
+                </Match>
+                <Match when={activeTab() === "results"}>
+                  <ResultsPage
+                    project={currentProject()}
+                    providers={providers()}
+                    history={history()}
+                    t={t}
+                    onReveal={(path) => void api.revealPath(projectAssetPath(currentProject().storagePath, path)).catch((error: unknown) => setBackendError(formatError(error)))}
+                    onOpenFolder={() => void api.revealPath(currentProject().storagePath).catch((error: unknown) => setBackendError(formatError(error)))}
+                    onDownload={(asset) => {
+                      if (!asset.filePath) { setBackendError(t("noLocalFile")); return; }
+                      const sourcePath = projectAssetPath(currentProject().storagePath, asset.filePath);
+                      const suggestedName = asset.filePath.split(/[\\/]/).at(-1) || `${asset.id}.${asset.format}`;
+                      void api.exportAsset(sourcePath, suggestedName, asset.url).catch((error: unknown) => setBackendError(formatError(error)));
+                    }}
                   />
                 </Match>
                 <Match when={activeTab() === "descriptions"}>

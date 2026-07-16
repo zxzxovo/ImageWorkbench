@@ -15,7 +15,8 @@ export type WorkspaceTab =
   | "history"
   | "descriptions"
   | "presets"
-  | "project-settings";
+  | "project-settings"
+  | "results";
 
 export type GenerationMode = "generate" | "edit" | "mask" | "variation" | "video";
 
@@ -92,6 +93,8 @@ export interface ProviderProfile {
   modelsPath?: string;
   compatibilityJson?: string;
   capabilityOverridesJson?: string;
+  /** null = auto (follow model capability), true/false = explicit override */
+  defaultStream?: boolean | null;
 }
 
 export interface CommonDescription {
@@ -126,6 +129,8 @@ export interface ProjectSettings {
   namingPattern: string;
   defaultProviderId: string;
   defaultModel: string;
+  flatOutput: boolean;
+  defaultStream: boolean | null;
 }
 
 export interface Project {
@@ -202,6 +207,10 @@ export interface GenerationDraft {
   publicFileUrl: boolean;
   ttlSeconds: number;
   customJson: string;
+  /** Custom local output filename (empty = default naming). Multi-image: suffixed _1 _2 etc. */
+  outputFilename: string;
+  /** Save outputs flat in the project output directory, not per-run subdirectories. */
+  flatOutput: boolean;
 }
 
 export interface ProjectSummary {

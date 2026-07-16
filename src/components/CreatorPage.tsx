@@ -649,6 +649,14 @@ export default function CreatorPage(props: CreatorPageProps) {
                 <div class="advanced-group">
                   <h3>{props.t("negativePrompt")}</h3>
                   <textarea rows="3" placeholder={props.t("negativePromptPlaceholder")} value={props.draft.negativePrompt} onInput={(event) => { props.onPromptOverrideClear(); props.setDraft("negativePrompt", event.currentTarget.value); }} />
+                  <Field label={props.t("outputFilename")}>
+                    <input
+                      placeholder={props.t("outputFilenameHint")}
+                      value={props.draft.outputFilename}
+                      spellcheck={false}
+                      onInput={(event) => props.setDraft("outputFilename", event.currentTarget.value)}
+                    />
+                  </Field>
                   <div class="toggle-grid">
                     <Show when={capabilities().supportsStreaming}><Toggle checked={props.draft.stream} onChange={(value) => props.setDraft("stream", value)} label={props.t("stream")} /></Show>
                     <Show when={capabilities().supportsBackground}><Toggle checked={props.draft.backgroundTask} onChange={(value) => props.setDraft("backgroundTask", value)} label={props.t("backgroundTask")} /></Show>

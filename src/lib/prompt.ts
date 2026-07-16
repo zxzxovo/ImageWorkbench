@@ -116,5 +116,7 @@ export function normalizeDraftForModel(
     persistRemoteFile: capabilities.supportsRemoteFiles && draft.persistRemoteFile,
     publicFileUrl: capabilities.supportsRemoteFiles && draft.publicFileUrl,
     ttlSeconds: capabilities.supportsRemoteFiles ? draft.ttlSeconds : 3600,
+    outputFilename: draft.outputFilename ?? "",
+    flatOutput: draft.flatOutput ?? false,
   };
 }

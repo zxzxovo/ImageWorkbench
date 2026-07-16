@@ -101,6 +101,9 @@ pub struct ProviderProfileDto {
     #[serde(alias = "extraJson")]
     pub compatibility_json: Option<String>,
     pub capability_overrides_json: Option<String>,
+    /// Default streaming preference: None = follow model capability, Some(true/false) = explicit override.
+    #[serde(default)]
+    pub default_stream: Option<bool>,
 }
 
 impl ProviderProfileDto {
@@ -431,6 +434,7 @@ pub enum WorkspaceTab {
     Descriptions,
     Presets,
     ProjectSettings,
+    Results,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
@@ -499,6 +503,9 @@ pub struct ProjectSettingsDto {
     pub naming_pattern: String,
     pub default_provider_id: String,
     pub default_model: String,
+    pub flat_output: bool,
+    #[serde(default)]
+    pub default_stream: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, specta::Type)]
@@ -598,6 +605,13 @@ pub struct GenerationDraftDto {
     pub xai_public_url_expires_after: Option<u32>,
     pub resume_interaction_id: Option<String>,
     pub last_event_id: Option<String>,
+    /// Local output filename override (leave empty to use default naming).
+    #[serde(default)]
+    pub output_filename: String,
+    /// When true, store all outputs flat in the project output directory
+    /// instead of per-run subdirectories.
+    #[serde(default)]
+    pub flat_output: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]

@@ -3,11 +3,13 @@ import { createStore } from "solid-js/store";
 import {
   CalendarDays,
   Check,
+  Clipboard,
   Copy,
   Filter,
   FolderOpen,
   Heart,
   Image as ImageIcon,
+  Images,
   ListFilter,
   MoreHorizontal,
   Play,
@@ -26,6 +28,7 @@ import type { TranslationKey } from "../lib/i18n";
 import { getModelLabel, getModelsForProvider } from "../lib/models";
 import type {
   CommonDescription,
+  GeneratedAsset,
   GenerationPreset,
   HistoryRecord,
   Project,
@@ -47,6 +50,7 @@ export function HistoryPage(props: BaseProps & {
   onContinue: (record: HistoryRecord) => void;
   onToggleFavorite: (recordId: string) => void;
   onDelete: (recordId: string) => void;
+  onDeleteFailed: () => void;
 }) {
   const [query, setQuery] = createSignal("");
   const [providerId, setProviderId] = createSignal("all");
@@ -127,6 +131,12 @@ export function HistoryPage(props: BaseProps & {
             <CalendarDays size={16} />
             {dateFilter() === "30d" ? `${props.t("last30Days")} ✓` : props.t("last30Days")}
           </button>
+          <Show when={props.history.some((r) => r.projectId === props.project.id && r.status === "failed")}>
+            <button class="button secondary" type="button" onClick={props.onDeleteFailed}>
+              <Trash2 size={16} />
+              {props.t("deleteFailed")}
+            </button>
+          </Show>
         </div>
       </header>
 
@@ -425,7 +435,23 @@ export function ProjectSettingsPage(props: BaseProps & {
           <div class="settings-form control-grid">
             <Field label={props.t("provider")}><select value={draft.settings.defaultProviderId} onChange={(event) => { const providerId = event.currentTarget.value; const provider = props.providers.find((item) => item.id === providerId); setDraft("settings", { ...draft.settings, defaultProviderId: providerId, defaultModel: provider?.models[0] ?? "" }); }}><For each={props.providers}>{(provider) => <option value={provider.id}>{provider.name}</option>}</For></select></Field>
             <Field label={props.t("model")}><select value={draft.settings.defaultModel} onChange={(event) => setDraft("settings", "defaultModel", event.currentTarget.value)}><For each={getModelsForProvider(defaultProvider())}>{(model) => <option value={model.id}>{model.label}</option>}</For></select></Field>
-            <Field label={props.t("namingPattern")} class="span-2"><input value={draft.settings.namingPattern} spellcheck={false} onInput={(event) => setDraft("settings", "namingPattern", event.currentTarget.value)} /></Field>
+            <Field label={props.t("namingPattern")} class="span-2">
+              <input value={draft.settings.namingPattern} spellcheck={false} onInput={(event) => setDraft("settings", "namingPattern", event.currentTarget.value)} />
+              <small class="field-hint">{props.t("namingPatternHint")}</small>
+            </Field>
+            <Field label={props.t("defaultStream")} class="span-2">
+              <select
+                value={draft.settings.defaultStream === null ? "auto" : draft.settings.defaultStream ? "on" : "off"}
+                onChange={(event) => {
+                  const v = event.currentTarget.value;
+                  setDraft("settings", "defaultStream", v === "auto" ? null : v === "on");
+                }}
+              >
+                <option value="auto">{props.t("streamAuto")}</option>
+                <option value="on">{props.t("streamOn")}</option>
+                <option value="off">{props.t("streamOff")}</option>
+              </select>
+            </Field>
           </div>
         </section>
         <section class="settings-section">
@@ -435,6 +461,10 @@ export function ProjectSettingsPage(props: BaseProps & {
             <Toggle checked={draft.settings.saveMetadata} onChange={(value) => setDraft("settings", "saveMetadata", value)} label={props.t("saveMetadata")} />
             <Toggle checked={draft.settings.saveRawResponse} onChange={(value) => setDraft("settings", "saveRawResponse", value)} label={props.t("saveRawResponse")} />
             <Toggle checked={draft.settings.autoOpenFolder} onChange={(value) => setDraft("settings", "autoOpenFolder", value)} label={props.t("autoOpenFolder")} />
+            <div class="toggle-row">
+              <Toggle checked={draft.settings.flatOutput} onChange={(value) => setDraft("settings", "flatOutput", value)} label={props.t("flatOutput")} />
+              <small class="field-hint">{props.t("flatOutputHint")}</small>
+            </div>
           </div>
         </section>
         <section class="settings-section danger-section">
@@ -442,6 +472,98 @@ export function ProjectSettingsPage(props: BaseProps & {
           <div class="danger-row"><div><strong>{props.t("clearHistory")}</strong><small>{props.project.name}</small></div><button class="button danger" type="button" onClick={props.onClearHistory}><Trash2 size={16} />{props.t("clearHistory")}</button></div>
         </section>
       </div>
+    </div>
+  );
+}
+
+export function ResultsPage(props: BaseProps & {
+  history: HistoryRecord[];
+  onReveal: (path: string) => void;
+  onOpenFolder: () => void;
+  onDownload: (asset: GeneratedAsset) => void;
+}) {
+  const allAssets = createMemo(() =>
+    props.history
+      .filter((record) => record.projectId === props.project.id && record.status === "completed")
+      .flatMap((record) => record.assets.map((asset) => ({ asset, record })))
+      .sort((a, b) => new Date(b.record.createdAt).getTime() - new Date(a.record.createdAt).getTime())
+  );
+
+  const [copiedId, setCopiedId] = createSignal<string | null>(null);
+
+  const copyImage = async (asset: GeneratedAsset, assetUrl: string) => {
+    try {
+      const img = new Image();
+      img.crossOrigin = "anonymous";
+      await new Promise<void>((resolve, reject) => { img.onload = () => resolve(); img.onerror = reject; img.src = assetUrl; });
+      const canvas = document.createElement("canvas");
+      canvas.width = img.naturalWidth || 512;
+      canvas.height = img.naturalHeight || 512;
+      canvas.getContext("2d")!.drawImage(img, 0, 0);
+      await new Promise<void>((resolve, reject) => canvas.toBlob(async (blob) => {
+        if (!blob) { reject(new Error("canvas toBlob failed")); return; }
+        await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
+        resolve();
+      }, "image/png"));
+      setCopiedId(asset.id);
+      window.setTimeout(() => setCopiedId(null), 1800);
+    } catch (_err) {
+      // clipboard write may be blocked in some browsers; fall back silently
+    }
+  };
+
+  return (
+    <div class="page management-page results-page">
+      <header class="page-header">
+        <div>
+          <h1>{props.t("allResults")}</h1>
+          <p>{props.t("resultCount").replace("{count}", String(allAssets().length))}</p>
+        </div>
+        <button class="button secondary" type="button" onClick={props.onOpenFolder}>
+          <FolderOpen size={16} />
+          {props.t("openProjectFolder")}
+        </button>
+      </header>
+
+      <Show
+        when={allAssets().length > 0}
+        fallback={<EmptyState icon={<Images size={24} />} title={props.t("noResults")} />}
+      >
+        <div class="results-grid-full">
+          <For each={allAssets()}>
+            {({ asset, record }) => (
+              <div class="result-card">
+                <div class="result-thumb">
+                  <img src={asset.url} alt={asset.prompt} loading="lazy" />
+                </div>
+                <div class="result-card-meta">
+                  <span class="result-model">{record.model}</span>
+                  <span class="result-date">{new Date(asset.createdAt).toLocaleDateString()}</span>
+                </div>
+                <div class="result-card-actions">
+                  <button
+                    class="button secondary compact"
+                    type="button"
+                    title={copiedId() === asset.id ? props.t("copied") : props.t("copyImage")}
+                    onClick={() => void copyImage(asset, asset.url)}
+                  >
+                    <Show when={copiedId() === asset.id} fallback={<Clipboard size={14} />}>
+                      <Check size={14} />
+                    </Show>
+                    {copiedId() === asset.id ? props.t("copied") : props.t("copyImage")}
+                  </button>
+                  <button class="button secondary compact" type="button" onClick={() => props.onReveal(asset.filePath)}>
+                    <FolderOpen size={14} />{props.t("reveal")}
+                  </button>
+                  <button class="button secondary compact" type="button" onClick={() => props.onDownload(asset)}>
+                    <Copy size={14} />{props.t("download")}
+                  </button>
+                </div>
+              </div>
+            )}
+          </For>
+        </div>
+      </Show>
     </div>
   );
 }

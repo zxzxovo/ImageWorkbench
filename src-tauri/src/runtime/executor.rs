@@ -229,6 +229,8 @@ pub async fn poll_remote_tasks(
                     &job,
                     response,
                     &mut sequence,
+                    false,
+                    "",
                 )
                 .await?;
                 download_failures += processed.failures.len();
@@ -607,6 +609,8 @@ async fn execute_realtime(
                     &job,
                     response,
                     &mut output_sequence,
+                    frontend.draft.flat_output,
+                    &frontend.draft.output_filename,
                 )
                 .await?;
                 has_successful_output |= response_has_content(&processed.result);
@@ -807,6 +811,8 @@ async fn process_response(
     job: &domain::JobRecord,
     response: provider::GenerationResponse,
     sequence: &mut u32,
+    flat_output: bool,
+    output_filename: &str,
 ) -> CommandResult<ProcessedResponse> {
     let interaction_id = response
         .raw
@@ -850,10 +856,32 @@ async fn process_response(
                     .or(mime_type)
                     .unwrap_or_else(|| "image/png".to_owned());
                 let extension = extension_for_output(&mime, downloaded.filename.as_deref());
-                let directory = project
-                    .layout()
-                    .output_run_directory(Utc::now().date_naive(), &run.id)?;
-                let path = directory.join(format!("{:03}.{}", current + 1, extension));
+                let index = *sequence + 1; // 1-based for display
+                let (directory, filename) = if flat_output {
+                    let dir = project.layout().output_directory();
+                    std::fs::create_dir_all(&dir)?;
+                    let short_id = &run.id[..run.id.len().min(8)];
+                    let date_str = Utc::now().format("%Y-%m-%d").to_string();
+                    let fname = if output_filename.trim().is_empty() {
+                        format!("{date_str}_{short_id}_{index:03}.{extension}")
+                    } else {
+                        let base = sanitize_filename(output_filename.trim());
+                        format!("{base}_{index:03}.{extension}")
+                    };
+                    (dir, fname)
+                } else {
+                    let dir = project
+                        .layout()
+                        .output_run_directory(Utc::now().date_naive(), &run.id)?;
+                    let fname = if output_filename.trim().is_empty() {
+                        format!("{index:03}.{extension}")
+                    } else {
+                        let base = sanitize_filename(output_filename.trim());
+                        format!("{base}_{index:03}.{extension}")
+                    };
+                    (dir, fname)
+                };
+                let path = directory.join(&filename);
                 let stored = atomic_write_new(&path, &downloaded.bytes)?;
                 let dimensions = image::load_from_memory(&downloaded.bytes)
                     .map(|image| (image.width(), image.height()))
@@ -1400,6 +1428,21 @@ fn remote_job_kind(kind: provider::RemoteJobKind) -> &'static str {
         provider::RemoteJobKind::Background => "background",
         provider::RemoteJobKind::Batch => "batch",
     }
+}
+
+/// Strips characters not safe for a filename, replacing runs of illegal chars with `_`.
+fn sanitize_filename(name: &str) -> String {
+    let cleaned: String = name
+        .chars()
+        .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' || c == '.' { c } else { '_' })
+        .collect();
+    // Collapse consecutive underscores and trim leading/trailing ones.
+    let collapsed = cleaned
+        .split('_')
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join("_");
+    if collapsed.is_empty() { "output".to_owned() } else { collapsed }
 }
 
 fn remote_job_status(status: provider::RemoteJobStatus) -> &'static str {

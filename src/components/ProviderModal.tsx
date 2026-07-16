@@ -415,6 +415,21 @@ export default function ProviderModal(props: ProviderModalProps) {
 
           <Show when={formError()}><p class="form-error" role="alert">{formError()}</p></Show>
           <Toggle checked={draft.enabled} onChange={(value) => setDraft("enabled", value)} label={props.t("enabled")} />
+          <div class="setting-row">
+            <label class="setting-label">{props.t("defaultStream")}</label>
+            <select
+              class="setting-select"
+              value={draft.defaultStream === null || draft.defaultStream === undefined ? "auto" : draft.defaultStream ? "on" : "off"}
+              onChange={(event) => {
+                const v = event.currentTarget.value;
+                setDraft("defaultStream", v === "auto" ? null : v === "on");
+              }}
+            >
+              <option value="auto">{props.t("streamAuto")}</option>
+              <option value="on">{props.t("streamOn")}</option>
+              <option value="off">{props.t("streamOff")}</option>
+            </select>
+          </div>
 
           <section class="model-sync-section">
             <div class="section-row">

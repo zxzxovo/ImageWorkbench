@@ -230,6 +230,8 @@ export type GenerationDraftDto = {
 	xaiPublicUrlExpiresAfter: number | null,
 	resumeInteractionId: string | null,
 	lastEventId: string | null,
+	outputFilename: string,
+	flatOutput: boolean,
 };
 
 export type GenerationEventEnvelope = {
@@ -481,6 +483,8 @@ export type ProjectSettingsDto = {
 	namingPattern: string,
 	defaultProviderId: string,
 	defaultModel: string,
+	flatOutput: boolean,
+	defaultStream: boolean | null,
 };
 
 export type ProjectSummary = {
@@ -552,7 +556,9 @@ export type ProviderProfileDto_Deserialize = {
 	authQueryName: string | null,
 	customHeaders?: ProviderHeaderDto[],
 	modelsPath: string | null,
+	compatibilityJson: string | null,
 	capabilityOverridesJson: string | null,
+	defaultStream: boolean | null,
 } & {
 	compatibilityJson: string | null,
 } | {
@@ -585,6 +591,7 @@ export type ProviderProfileDto_Serialize = {
 	modelsPath: string | null,
 	compatibilityJson: string | null,
 	capabilityOverridesJson: string | null,
+	defaultStream: boolean | null,
 };
 
 export type ProviderRemapResult = {

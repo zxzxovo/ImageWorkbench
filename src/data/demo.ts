@@ -127,6 +127,8 @@ export const demoProjects: Project[] = [
       namingPattern: "{date}_{model}_{index}",
       defaultProviderId: "provider-gemini-studio",
       defaultModel: "gemini-3.1-flash-image",
+      flatOutput: false,
+      defaultStream: null,
     },
   },
   {
@@ -147,6 +149,8 @@ export const demoProjects: Project[] = [
       namingPattern: "{project}_{timestamp}_{index}",
       defaultProviderId: "provider-gemini-studio",
       defaultModel: "gemini-3-pro-image",
+      flatOutput: false,
+      defaultStream: null,
     },
   },
   {
@@ -167,6 +171,8 @@ export const demoProjects: Project[] = [
       namingPattern: "{timestamp}_{index}",
       defaultProviderId: "provider-xai-main",
       defaultModel: "grok-imagine-image",
+      flatOutput: false,
+      defaultStream: null,
     },
   },
 ];
@@ -303,6 +309,8 @@ export const initialDraft: GenerationDraft = {
   publicFileUrl: false,
   ttlSeconds: 3600,
   customJson: "{}",
+  outputFilename: "",
+  flatOutput: false,
 };
 
 export const starterProviders: ProviderProfile[] = [
