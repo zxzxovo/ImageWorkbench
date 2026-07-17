@@ -5,12 +5,15 @@ import {
   Check,
   Clipboard,
   Copy,
+  Download,
   Filter,
   FolderOpen,
   Heart,
   Image as ImageIcon,
   Images,
   ListFilter,
+  List as ListIcon,
+  LayoutGrid,
   MoreHorizontal,
   Play,
   Plus,
@@ -490,6 +493,7 @@ export function ResultsPage(props: BaseProps & {
   );
 
   const [copiedId, setCopiedId] = createSignal<string | null>(null);
+  const [viewMode, setViewMode] = createSignal<"grid" | "list">("grid");
 
   const copyImage = async (asset: GeneratedAsset, assetUrl: string) => {
     try {
@@ -512,6 +516,20 @@ export function ResultsPage(props: BaseProps & {
     }
   };
 
+  const assetActions = (asset: GeneratedAsset) => (
+    <div class="result-item-actions">
+      <IconButton
+        label={copiedId() === asset.id ? props.t("copied") : props.t("copyImage")}
+        class={copiedId() === asset.id ? "is-success" : ""}
+        onClick={() => void copyImage(asset, asset.url)}
+      >
+        <Show when={copiedId() === asset.id} fallback={<Clipboard size={15} />}><Check size={15} /></Show>
+      </IconButton>
+      <IconButton label={props.t("reveal")} onClick={() => props.onReveal(asset.filePath)}><FolderOpen size={15} /></IconButton>
+      <IconButton label={props.t("download")} onClick={() => props.onDownload(asset)}><Download size={15} /></IconButton>
+    </div>
+  );
+
   return (
     <div class="page management-page results-page">
       <header class="page-header">
@@ -519,50 +537,62 @@ export function ResultsPage(props: BaseProps & {
           <h1>{props.t("allResults")}</h1>
           <p>{props.t("resultCount").replace("{count}", String(allAssets().length))}</p>
         </div>
-        <button class="button secondary" type="button" onClick={props.onOpenFolder}>
-          <FolderOpen size={16} />
-          {props.t("openProjectFolder")}
-        </button>
+        <div class="header-actions results-header-actions">
+          <div class="results-view-toggle" role="group" aria-label={props.t("allResults")}>
+            <IconButton label={props.t("gridView")} active={viewMode() === "grid"} onClick={() => setViewMode("grid")}><LayoutGrid size={16} /></IconButton>
+            <IconButton label={props.t("listView")} active={viewMode() === "list"} onClick={() => setViewMode("list")}><ListIcon size={16} /></IconButton>
+          </div>
+          <button class="button secondary" type="button" onClick={props.onOpenFolder}>
+            <FolderOpen size={16} />
+            {props.t("openProjectFolder")}
+          </button>
+        </div>
       </header>
 
       <Show
         when={allAssets().length > 0}
         fallback={<EmptyState icon={<Images size={24} />} title={props.t("noResults")} />}
       >
-        <div class="results-grid-full">
-          <For each={allAssets()}>
-            {({ asset, record }) => (
-              <div class="result-card">
-                <div class="result-thumb">
-                  <img src={asset.url} alt={asset.prompt} loading="lazy" />
-                </div>
-                <div class="result-card-meta">
-                  <span class="result-model">{record.model}</span>
-                  <span class="result-date">{new Date(asset.createdAt).toLocaleDateString()}</span>
-                </div>
-                <div class="result-card-actions">
-                  <button
-                    class="button secondary compact"
-                    type="button"
-                    title={copiedId() === asset.id ? props.t("copied") : props.t("copyImage")}
-                    onClick={() => void copyImage(asset, asset.url)}
-                  >
-                    <Show when={copiedId() === asset.id} fallback={<Clipboard size={14} />}>
-                      <Check size={14} />
-                    </Show>
-                    {copiedId() === asset.id ? props.t("copied") : props.t("copyImage")}
-                  </button>
-                  <button class="button secondary compact" type="button" onClick={() => props.onReveal(asset.filePath)}>
-                    <FolderOpen size={14} />{props.t("reveal")}
-                  </button>
-                  <button class="button secondary compact" type="button" onClick={() => props.onDownload(asset)}>
-                    <Copy size={14} />{props.t("download")}
-                  </button>
-                </div>
-              </div>
-            )}
-          </For>
-        </div>
+        <Show
+          when={viewMode() === "grid"}
+          fallback={(
+            <div class="results-list-full">
+              <For each={allAssets()}>
+                {({ asset, record }) => (
+                  <article class="result-list-row">
+                    <div class="result-list-thumb"><img src={asset.url} alt={asset.prompt} loading="lazy" /></div>
+                    <div class="result-list-copy">
+                      <strong title={asset.prompt}>{asset.prompt || record.prompt}</strong>
+                      <span>{record.model} · {asset.width} x {asset.height} · {asset.format.toUpperCase()}</span>
+                    </div>
+                    <time class="result-list-date" dateTime={asset.createdAt}>{new Date(asset.createdAt).toLocaleDateString()}</time>
+                    {assetActions(asset)}
+                  </article>
+                )}
+              </For>
+            </div>
+          )}
+        >
+          <div class="results-grid-full">
+            <For each={allAssets()}>
+              {({ asset, record }) => (
+                <article class="result-gallery-card">
+                  <div class="result-gallery-thumb">
+                    <img src={asset.url} alt={asset.prompt} loading="lazy" />
+                    <span>{asset.width} x {asset.height}</span>
+                  </div>
+                  <div class="result-gallery-body">
+                    <div class="result-gallery-copy">
+                      <strong title={asset.prompt}>{asset.prompt || record.prompt}</strong>
+                      <div><span>{record.model}</span><time dateTime={asset.createdAt}>{new Date(asset.createdAt).toLocaleDateString()}</time></div>
+                    </div>
+                    {assetActions(asset)}
+                  </div>
+                </article>
+              )}
+            </For>
+          </div>
+        </Show>
       </Show>
     </div>
   );

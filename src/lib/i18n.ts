@@ -276,6 +276,10 @@ const zh = {
   imageUnit: "张",
   more: "更多",
   color: "颜色",
+  colorValue: "颜色值",
+  chooseColor: "打开调色盘",
+  colorFormatHint: "支持 #RGB、#RRGGBB、#RGBA、#RRGGBBAA、rgb()、rgba()、argb() 和 0xAARRGGBB",
+  invalidColor: "请输入有效的颜色值",
   compare: "对比",
   exitCompare: "退出对比",
   compareRecords: "记录对比",
@@ -299,6 +303,9 @@ const zh = {
   openProjectFolder: "打开项目文件夹",
   allResults: "全部结果",
   resultCount: "{count} 张图片",
+  gridView: "大图卡片视图",
+  listView: "列表视图",
+  promptEditor: "提示词编写",
 } as const;
 
 const en: Record<keyof typeof zh, string> = {
@@ -577,6 +584,10 @@ const en: Record<keyof typeof zh, string> = {
   imageUnit: "images",
   more: "More",
   color: "Color",
+  colorValue: "Color value",
+  chooseColor: "Open color picker",
+  colorFormatHint: "Supports #RGB, #RRGGBB, #RGBA, #RRGGBBAA, rgb(), rgba(), argb(), and 0xAARRGGBB",
+  invalidColor: "Enter a valid color value",
   compare: "Compare",
   exitCompare: "Exit compare",
   compareRecords: "Compare records",
@@ -600,6 +611,9 @@ const en: Record<keyof typeof zh, string> = {
   openProjectFolder: "Open project folder",
   allResults: "All results",
   resultCount: "{count} images",
+  gridView: "Large card view",
+  listView: "List view",
+  promptEditor: "Prompt editor",
 };
 
 export type TranslationKey = keyof typeof zh;

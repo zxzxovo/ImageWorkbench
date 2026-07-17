@@ -1,7 +1,8 @@
-import { createEffect } from "solid-js";
+import { Show, createEffect, createMemo, createSignal } from "solid-js";
 import { createStore } from "solid-js/store";
 import { FolderOpen, Save } from "lucide-solid";
 import { api } from "../lib/api";
+import { parseProjectColor } from "../lib/color";
 import type { TranslationKey } from "../lib/i18n";
 import type { Project, ProviderProfile } from "../types";
 import { Field, Modal } from "./common";
@@ -24,10 +25,26 @@ export default function ProjectModal(props: ProjectModalProps) {
     storagePath: defaultStoragePath,
     color: colors[0],
   });
+  const [colorInput, setColorInput] = createSignal(colors[0]);
+  const parsedColor = createMemo(() => parseProjectColor(colorInput()));
 
   createEffect(() => {
-    if (props.open) setDraft({ name: "", description: "", storagePath: defaultStoragePath, color: colors[0] });
+    if (props.open) {
+      setDraft({ name: "", description: "", storagePath: defaultStoragePath, color: colors[0] });
+      setColorInput(colors[0]);
+    }
   });
+
+  const updateColorInput = (value: string) => {
+    setColorInput(value);
+    const parsed = parseProjectColor(value);
+    if (parsed) setDraft("color", parsed.css);
+  };
+
+  const selectColor = (value: string) => {
+    setColorInput(value);
+    setDraft("color", value);
+  };
 
   const browse = async () => {
     const path = await api.chooseDirectory(draft.storagePath);
@@ -35,7 +52,8 @@ export default function ProjectModal(props: ProjectModalProps) {
   };
 
   const create = () => {
-    if (!draft.name.trim() || !draft.storagePath.trim()) return;
+    const color = parsedColor();
+    if (!draft.name.trim() || !draft.storagePath.trim() || !color) return;
     const provider = props.providers.find((item) => item.enabled) ?? props.providers[0];
     const now = new Date().toISOString();
     props.onCreate({
@@ -43,7 +61,7 @@ export default function ProjectModal(props: ProjectModalProps) {
       name: draft.name.trim(),
       description: draft.description.trim(),
       storagePath: draft.storagePath.trim(),
-      color: draft.color,
+      color: color.css,
       createdAt: now,
       updatedAt: now,
       descriptions: [],
@@ -65,7 +83,7 @@ export default function ProjectModal(props: ProjectModalProps) {
   const footer = (
     <>
       <button class="button secondary" type="button" onClick={props.onClose}>{props.t("cancel")}</button>
-      <button class="button primary" type="button" disabled={!draft.name.trim() || !draft.storagePath.trim()} onClick={create}><Save size={16} />{props.t("createProjectAction")}</button>
+      <button class="button primary" type="button" disabled={!draft.name.trim() || !draft.storagePath.trim() || !parsedColor()} onClick={create}><Save size={16} />{props.t("createProjectAction")}</button>
     </>
   );
 
@@ -92,17 +110,43 @@ export default function ProjectModal(props: ProjectModalProps) {
           </div>
         </Field>
         <Field label={props.t("color")}>
-          <div class="color-swatches">
-            {colors.map((color) => (
-              <button
-                type="button"
-                class={draft.color === color ? "is-selected" : ""}
-                style={{ "background-color": color }}
-                aria-label={color}
-                onClick={() => setDraft("color", color)}
-              />
-            ))}
+          <div class="color-control-row">
+            <div class="color-swatches">
+              {colors.map((color) => (
+                <button
+                  type="button"
+                  class={parsedColor()?.css === color ? "is-selected" : ""}
+                  style={{ "background-color": color }}
+                  aria-label={color}
+                  onClick={() => selectColor(color)}
+                />
+              ))}
+            </div>
+            <input
+              class="project-color-picker"
+              type="color"
+              value={parsedColor()?.picker ?? colors[0]}
+              aria-label={props.t("chooseColor")}
+              title={props.t("chooseColor")}
+              onInput={(event) => selectColor(event.currentTarget.value)}
+            />
           </div>
+          <div class="color-value-row">
+            <span class="color-value-preview" style={{ "background-color": parsedColor()?.css ?? "transparent" }} aria-hidden="true" />
+            <input
+              value={colorInput()}
+              aria-label={props.t("colorValue")}
+              aria-invalid={!parsedColor()}
+              spellcheck={false}
+              onInput={(event) => updateColorInput(event.currentTarget.value)}
+              onBlur={() => {
+                const parsed = parsedColor();
+                if (parsed) setColorInput(parsed.css);
+              }}
+            />
+          </div>
+          <small class="field-hint color-format-hint">{props.t("colorFormatHint")}</small>
+          <Show when={!parsedColor()}><span class="form-error" role="alert">{props.t("invalidColor")}</span></Show>
         </Field>
       </div>
     </Modal>

@@ -11,7 +11,6 @@ import {
   GripVertical,
   Image as ImageIcon,
   Images,
-  Layers3,
   Link2,
   LoaderCircle,
   MoreHorizontal,
@@ -263,6 +262,7 @@ export default function CreatorPage(props: CreatorPageProps) {
     const suffix = props.draft.prompt.slice(end);
     const spacer = prefix && !/\s$/.test(prefix) ? " " : "";
     const next = `${prefix}${spacer}${token}${suffix}`;
+    props.onPromptOverrideClear();
     props.setDraft("prompt", next);
     queueMicrotask(() => {
       const caret = prefix.length + spacer.length + token.length;
@@ -404,23 +404,6 @@ export default function CreatorPage(props: CreatorPageProps) {
                   <input type="number" min={capabilities().customSizeRule?.multipleOf ?? 16} max={capabilities().customSizeRule?.maxEdge ?? 3840} step={capabilities().customSizeRule?.multipleOf ?? 16} value={props.draft.customHeight} onInput={(event) => props.setDraft("customHeight", Number(event.currentTarget.value))} />
                 </Field>
               </Show>
-            </div>
-          </div>
-
-          <div class="panel-section prompt-section">
-            <Field label={props.t("prompt")}>
-              <textarea
-                ref={promptInput}
-                class="prompt-input"
-                rows="7"
-                placeholder={props.t("promptPlaceholder")}
-                value={props.draft.prompt}
-                onInput={(event) => { props.onPromptOverrideClear(); props.setDraft("prompt", event.currentTarget.value); }}
-              />
-            </Field>
-            <div class="prompt-meta">
-              <span>{props.draft.prompt.length.toLocaleString()} chars</span>
-              <Show when={validationMessage()}><span class="validation-message">{validationMessage()}</span></Show>
             </div>
           </div>
 
@@ -677,16 +660,29 @@ export default function CreatorPage(props: CreatorPageProps) {
         </section>
 
         <aside class="creator-side">
-          <section class="work-panel prompt-preview-panel">
+          <section class="work-panel prompt-editor-panel">
             <div class="panel-heading">
-              <div><Layers3 size={16} /><h2>{props.t("composedPrompt")}</h2></div>
-              <span>{composedPrompt().length}</span>
+              <div><SquarePen size={16} /><h2>{props.t("promptEditor")}</h2></div>
             </div>
-            <div class="composed-prompt">
-              <Show when={props.project.settings.useCommonDescriptions && props.project.descriptions.some((item) => item.enabled)}>
+            <div class="prompt-editor-body">
+              <Show when={props.project.settings.useCommonDescriptions && props.project.descriptions.some((item) => item.enabled && item.content.trim())}>
                 <span class="context-label">{props.t("projectContext")}</span>
               </Show>
-              <p>{composedPrompt() || props.t("promptPlaceholder")}</p>
+              <textarea
+                ref={promptInput}
+                class="prompt-input prompt-editor-input"
+                rows="8"
+                placeholder={props.t("promptPlaceholder")}
+                value={props.draft.prompt}
+                onInput={(event) => {
+                  props.onPromptOverrideClear();
+                  props.setDraft("prompt", event.currentTarget.value);
+                }}
+              />
+              <div class="prompt-meta">
+                <span>{props.draft.prompt.length.toLocaleString()} chars</span>
+                <Show when={validationMessage()}><span class="validation-message">{validationMessage()}</span></Show>
+              </div>
             </div>
             <div class="request-summary">
               <span>{provider()?.name}</span><span>{props.draft.model}</span><span>{props.draft.aspectRatio}</span><span>{props.draft.size}</span><span>×{props.draft.count}</span>

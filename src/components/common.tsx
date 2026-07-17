@@ -15,6 +15,7 @@ export function IconButton(props: {
       type={props.type ?? "button"}
       class={`icon-button ${props.active ? "is-active" : ""} ${props.class ?? ""}`}
       aria-label={props.label}
+      aria-pressed={props.active === undefined ? undefined : props.active}
       title={props.label}
       disabled={props.disabled}
       onClick={props.onClick}

@@ -1,8 +1,6 @@
 import { For, Match, Show, Switch, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
 import { createStore } from "solid-js/store";
 import {
-  Archive,
-  ChevronDown,
   FolderOpen,
   FolderPlus,
   History,
@@ -30,7 +28,7 @@ import { IconButton, StatusDot } from "./components/common";
 import { demoWorkspace, initialDraft, starterProviders } from "./data/demo";
 import { api, formatError } from "./lib/api";
 import { translate, type TranslationKey } from "./lib/i18n";
-import { getModelCapabilities, getProviderAccent } from "./lib/models";
+import { getModelCapabilities } from "./lib/models";
 import { normalizeDraftForModel } from "./lib/prompt";
 import type {
   GenerationPreset,
@@ -98,7 +96,6 @@ export default function App() {
   const [activeTab, setActiveTab] = createSignal<WorkspaceTab>("create");
   const [providerModalOpen, setProviderModalOpen] = createSignal(false);
   const [projectModalOpen, setProjectModalOpen] = createSignal(false);
-  const [projectMenuOpen, setProjectMenuOpen] = createSignal(false);
   const [sidebarCollapsed, setSidebarCollapsed] = createSignal(false);
   const [hydrated, setHydrated] = createSignal(false);
   const [backendError, setBackendError] = createSignal("");
@@ -248,7 +245,6 @@ export default function App() {
     if (event.key !== "Escape") return;
     setProviderModalOpen(false);
     setProjectModalOpen(false);
-    setProjectMenuOpen(false);
   };
   onMount(() => window.addEventListener("keydown", closeMenus));
   onCleanup(() => window.removeEventListener("keydown", closeMenus));
@@ -304,7 +300,6 @@ export default function App() {
         ?? providers()[0];
       setDraftProviderModel(nextProvider, next.settings.defaultModel);
     }
-    setProjectMenuOpen(false);
     if (!api.isDemo && !loadedProjectIds.has(projectId)) {
       void api.loadProjectDetails(projectId).then((details) => {
         loadedProjectIds.add(projectId);
@@ -720,29 +715,13 @@ export default function App() {
         </div>
 
         <div class="sidebar-spacer" />
-        <Show when={!sidebarCollapsed()}>
-          <div class="provider-summary">
-            <div class="sidebar-section-label"><span>{t("providers")}</span><IconButton label={t("manageProviders")} onClick={() => setProviderModalOpen(true)}><Settings size={15} /></IconButton></div>
-            <For each={providers().filter((item) => item.enabled).slice(0, 4)}>
-              {(provider) => <button type="button" class="provider-summary-row" onClick={() => setProviderModalOpen(true)}><span style={{ color: getProviderAccent(provider.kind) }}><Archive size={15} /></span><span>{provider.name}</span><StatusDot status="online" /></button>}
-            </For>
-          </div>
-        </Show>
       </aside>
 
       <section class="workspace-shell">
         <header class="topbar">
-          <div class="project-switcher-wrap">
-            <button class="project-switcher" type="button" onClick={() => setProjectMenuOpen((value) => !value)}>
-              <span class="project-color" style={{ "background-color": project()?.color ?? "#6c727a" }} />
-              <span><strong>{project()?.name}</strong><small>{project()?.storagePath}</small></span>
-              <ChevronDown size={16} />
-            </button>
-            <Show when={projectMenuOpen()}>
-              <div class="project-menu">
-                <For each={projects()}>{(item) => <button type="button" class={item.id === activeProjectId() ? "is-active" : ""} onClick={() => selectProject(item.id)}><span class="project-color" style={{ "background-color": item.color }} /><span><strong>{item.name}</strong><small>{item.storagePath}</small></span></button>}</For>
-              </div>
-            </Show>
+          <div class="project-identity">
+            <span class="project-color" style={{ "background-color": project()?.color ?? "#6c727a" }} />
+            <span><strong>{project()?.name}</strong><small>{project()?.storagePath}</small></span>
           </div>
           <div class="topbar-spacer" />
           <Show when={api.isDemo}><span class="demo-badge" title={t("localDemoHint")}><StatusDot status="busy" />{t("localDemo")}</span></Show>
