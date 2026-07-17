@@ -9,15 +9,29 @@ export function composePrompt(
   if (!enabled) return cleanPrompt;
 
   const prefixes = descriptions
-    .filter((item) => item.enabled && item.placement === "prefix")
-    .map((item) => item.content.trim())
+    .filter((item) => item.enabled)
+    .map((item) => item.prefixContent.trim())
     .filter(Boolean);
   const suffixes = descriptions
-    .filter((item) => item.enabled && item.placement === "suffix")
-    .map((item) => item.content.trim())
+    .filter((item) => item.enabled)
+    .map((item) => item.suffixContent.trim())
     .filter(Boolean);
 
   return [...prefixes, cleanPrompt, ...suffixes].filter(Boolean).join("\n\n");
+}
+
+export function composeNegativePrompt(
+  manualNegativePrompt: string,
+  descriptions: CommonDescription[],
+  enabled: boolean,
+): string {
+  const projectNegativeParts = enabled
+    ? descriptions
+      .filter((item) => item.enabled)
+      .map((item) => item.negativeContent.trim())
+      .filter(Boolean)
+    : [];
+  return [...projectNegativeParts, manualNegativePrompt.trim()].filter(Boolean).join("\n");
 }
 
 export type DraftValidationError = "prompt" | "reference" | "reference-limit" | "count" | "variation-input" | "custom-size" | "mask" | "reference-dimensions";

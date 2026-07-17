@@ -14,6 +14,7 @@ interface ProviderModalProps {
   onClose: () => void;
   onUpsert: (provider: ProviderProfile) => void;
   onDelete: (providerId: string) => Promise<boolean>;
+  onError?: (error: unknown, context: string) => void;
 }
 
 const templateData: Array<{
@@ -40,6 +41,7 @@ function emptyProvider(kind: ProviderKind): ProviderProfile {
     apiMode: template.apiMode,
     enabled: true,
     models: providerDefaultModels[kind],
+    discoveredModels: [],
     apiVersion: kind === "gemini" ? "v1beta" : "",
     organization: "",
     projectId: "",
@@ -59,10 +61,12 @@ function emptyProvider(kind: ProviderKind): ProviderProfile {
 
 function normalizeProvider(provider: ProviderProfile): ProviderProfile {
   const defaults = emptyProvider(provider.kind);
+  const discoveredModels = [...new Set(provider.discoveredModels ?? [])];
   return {
     ...defaults,
     ...provider,
     models: [...provider.models],
+    discoveredModels,
     customHeaders: (provider.customHeaders ?? []).map((header) => ({
       ...header,
       id: header.id || crypto.randomUUID(),
@@ -86,6 +90,11 @@ export default function ProviderModal(props: ProviderModalProps) {
   // Track the raw API key the user has typed in this session so test/sync can
   // pass it directly to the backend without relying on a keyring round-trip.
   const [pendingApiKey, setPendingApiKey] = createSignal("");
+  const modelOptions = () => [...new Set([
+    ...providerDefaultModels[draft.kind],
+    ...(draft.discoveredModels ?? []),
+    ...draft.models,
+  ])];
 
   const loadProvider = (provider: ProviderProfile) => {
     setIsNew(false);
@@ -165,11 +174,15 @@ export default function ProviderModal(props: ProviderModalProps) {
   const saveProvider = async () => {
     try {
       const provider = await prepareDraft();
+      if (provider.enabled && provider.models.length === 0) {
+        throw new Error(props.t("noModelsEnabled"));
+      }
       props.onUpsert(provider);
       setSelectedId(provider.id);
       setIsNew(false);
-    } catch {
-      // Validation is shown inline so the editor remains open.
+    } catch (error) {
+      setFormError(formatError(error));
+      props.onError?.(error, "provider.save");
     }
   };
 
@@ -185,6 +198,7 @@ export default function ProviderModal(props: ProviderModalProps) {
     } catch (error) {
       setTestState("failure");
       setFormError(formatError(error));
+      props.onError?.(error, "provider.test");
     }
   };
 
@@ -195,10 +209,11 @@ export default function ProviderModal(props: ProviderModalProps) {
       const provider = await prepareDraft();
       const providerForSync = pendingApiKey() ? { ...provider, apiKey: pendingApiKey() } : provider;
       const models = await api.syncModels(providerForSync);
-      setDraft("models", models);
+      setDraft("discoveredModels", [...new Set(models)]);
       setDraft("lastSyncedAt", new Date().toISOString());
     } catch (error) {
       setFormError(formatError(error));
+      props.onError?.(error, "provider.sync_models");
     } finally {
       setSyncing(false);
     }
@@ -447,8 +462,28 @@ export default function ProviderModal(props: ProviderModalProps) {
                 </button>
               </div>
             </div>
-            <div class="model-chip-list">
-              <For each={draft.models}>{(model) => <span class="model-chip">{model}</span>}</For>
+            <p class="field-hint model-selection-hint">{props.t("modelSelectionHint")}</p>
+            <div class="model-selection-list">
+              <For each={modelOptions()}>{(model) => {
+                const isPreset = () => providerDefaultModels[draft.kind].includes(model);
+                const isDiscovered = () => (draft.discoveredModels ?? []).includes(model);
+                return (
+                  <label class={`model-selection-row ${draft.models.includes(model) ? "is-enabled" : ""}`}>
+                    <input
+                      type="checkbox"
+                      checked={draft.models.includes(model)}
+                      onChange={(event) => setDraft("models", (models) => event.currentTarget.checked
+                        ? [...new Set([...models, model])]
+                        : models.filter((item) => item !== model))}
+                    />
+                    <span>{model}</span>
+                    <span class="model-origin">
+                      <Show when={isPreset()}><small>{props.t("presetModel")}</small></Show>
+                      <Show when={isDiscovered()}><small>{props.t("discoveredModel")}</small></Show>
+                    </span>
+                  </label>
+                );
+              }}</For>
             </div>
           </section>
 

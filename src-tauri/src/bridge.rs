@@ -83,6 +83,8 @@ pub struct ProviderProfileDto {
     pub enabled: bool,
     #[serde(default)]
     pub models: Vec<String>,
+    #[serde(default)]
+    pub discovered_models: Vec<String>,
     pub api_version: Option<String>,
     pub organization: Option<String>,
     pub project_id: Option<String>,
@@ -238,6 +240,10 @@ impl ProviderProfileDto {
         let mut extra = BTreeMap::from([
             ("enabled".to_owned(), Value::Bool(self.enabled)),
             ("models".to_owned(), serde_json::json!(self.models)),
+            (
+                "discoveredModels".to_owned(),
+                serde_json::json!(self.discovered_models),
+            ),
         ]);
         if let Some(connection_extra) = self.parsed_extra_json()? {
             extra.insert(
@@ -464,14 +470,28 @@ pub enum DescriptionPlacement {
     Suffix,
 }
 
+impl Default for DescriptionPlacement {
+    fn default() -> Self {
+        Self::Prefix
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct CommonDescriptionDto {
     pub id: String,
     pub title: String,
+    #[serde(default)]
     pub content: String,
     pub enabled: bool,
+    #[serde(default)]
     pub placement: DescriptionPlacement,
+    #[serde(default)]
+    pub prefix_content: String,
+    #[serde(default)]
+    pub suffix_content: String,
+    #[serde(default)]
+    pub negative_content: String,
     pub created_at: String,
 }
 
@@ -760,6 +780,8 @@ pub struct GenerateImagesRequest {
     pub storage_path: String,
     pub provider: ProviderProfileDto,
     pub draft: GenerationDraftDto,
+    #[serde(default)]
+    pub manual_negative_prompt: Option<String>,
     pub composed_prompt: String,
     #[serde(default)]
     pub context_ids: Vec<String>,

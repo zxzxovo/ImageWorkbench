@@ -13,6 +13,36 @@ test("creator keeps one prompt editor and removes redundant shell controls", asy
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(1280);
 });
 
+test("diagnostics center exposes runtime and error investigation details", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto("/");
+  await page.locator("button:has(svg.lucide-bug)").click();
+
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toBeVisible();
+  await expect(dialog.locator(".diagnostics-kv-grid")).toBeVisible();
+  await expect(dialog.locator(".diagnostics-section")).toHaveCount(4);
+  await expect(dialog.locator(".diagnostics-toolbar button")).toHaveCount(3);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(1280);
+});
+
+test("provider model selection and structured descriptions are usable", async ({ page }) => {
+  await page.setViewportSize({ width: 1024, height: 720 });
+  await page.goto("/");
+
+  await page.locator(".topbar button:has(svg.lucide-sliders-horizontal)").click();
+  const providerDialog = page.getByRole("dialog");
+  await expect(providerDialog.locator(".model-selection-list")).toBeVisible();
+  expect(await providerDialog.locator(".model-selection-list input:checked").count()).toBeGreaterThan(0);
+  await providerDialog.locator(".modal-footer .button.secondary").click();
+
+  await page.getByRole("button", { name: /Common descriptions|通用描述/ }).click();
+  await expect(page.locator(".description-content-grid textarea")).toHaveCount(2);
+  await expect(page.locator(".description-extra-settings")).toBeVisible();
+  await expect(page.locator(".editor-heading-actions .icon-button")).toHaveCount(3);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(1025);
+});
+
 for (const viewport of [{ width: 1024, height: 640 }, { width: 1280, height: 800 }]) {
   test(`results views constrain images at ${viewport.width}x${viewport.height}`, async ({ page }) => {
     await page.setViewportSize(viewport);

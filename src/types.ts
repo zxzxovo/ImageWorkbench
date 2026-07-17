@@ -77,7 +77,10 @@ export interface ProviderProfile {
   hasStoredSecret?: boolean;
   apiMode: "native" | "openai-compatible";
   enabled: boolean;
+  /** Models explicitly enabled by the user. */
   models: string[];
+  /** Latest model IDs returned by the provider's model-list endpoint. */
+  discoveredModels?: string[];
   apiVersion?: string;
   organization?: string;
   projectId?: string;
@@ -100,9 +103,10 @@ export interface ProviderProfile {
 export interface CommonDescription {
   id: string;
   title: string;
-  content: string;
+  prefixContent: string;
+  suffixContent: string;
+  negativeContent: string;
   enabled: boolean;
-  placement: "prefix" | "suffix";
   createdAt: string;
 }
 
@@ -367,6 +371,7 @@ export interface GenerateRequest {
   storagePath: string;
   provider: ProviderProfile;
   draft: GenerationDraft;
+  manualNegativePrompt?: string;
   composedPrompt: string;
   contextIds: string[];
   presetId?: string;

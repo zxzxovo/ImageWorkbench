@@ -34,11 +34,19 @@ pub fn run() {
         .invoke_handler(specta_builder.invoke_handler())
         .setup(move |app| {
             let app_data_directory = app.path().app_data_dir()?;
-            let logging = init_tracing(&app_data_directory)?;
+            let logging = match init_tracing(&app_data_directory) {
+                Ok(logging) => Some(logging),
+                Err(error) => {
+                    eprintln!("failed to initialize file logging: {error}");
+                    None
+                }
+            };
             let state =
                 tauri::async_runtime::block_on(app_state::AppState::open(&app_data_directory))?;
 
-            app.manage(logging);
+            if let Some(logging) = logging {
+                app.manage(logging);
+            }
             app.manage(state);
             specta_builder.mount_events(app);
             Ok(())

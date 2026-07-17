@@ -64,4 +64,22 @@ describe("ProjectModal", () => {
     await fireEvent.input(screen.getByLabelText("chooseColor"), { target: { value: "#a55b43" } });
     expect((screen.getByLabelText("colorValue") as HTMLInputElement).value).toBe("#a55b43");
   });
+
+  it("keeps the modal open and shows backend project creation failures", async () => {
+    render(() => (
+      <ProjectModal
+        open
+        providers={[provider]}
+        t={(key) => key}
+        onClose={vi.fn()}
+        onCreate={vi.fn(async () => Promise.reject({ code: "storage", message: "project database is read-only" }))}
+      />
+    ));
+
+    await fireEvent.input(screen.getAllByRole("textbox")[0], { target: { value: "Broken project" } });
+    await fireEvent.click(screen.getByRole("button", { name: "createProjectAction" }));
+
+    expect((await screen.findByRole("alert")).textContent).toContain("[storage] project database is read-only");
+    expect(screen.getByRole("dialog")).not.toBeNull();
+  });
 });

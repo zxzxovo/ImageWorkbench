@@ -15,7 +15,7 @@ use crate::domain::{
 };
 
 use super::migrations::{PROJECT_MIGRATIONS, migrate};
-use super::{ProjectLayout, StorageError, StorageResult};
+use super::{ProjectLayout, StorageError, StorageResult, strip_extended_length_prefix};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
@@ -903,18 +903,19 @@ impl ProjectStore {
     }
 
     async fn safe_run_output_paths(&self, run_id: &str) -> StorageResult<Vec<PathBuf>> {
-        let output_root = self.layout.output_directory().canonicalize()?;
+        let output_directory = self.layout.output_directory();
+        let output_root = strip_extended_length_prefix(output_directory.canonicalize()?);
         let mut paths = HashSet::new();
         for output in self.list_outputs(run_id).await? {
             let Some(relative) = output.local_path else {
                 continue;
             };
             let resolved = self.layout.resolve_relative(&relative)?;
-            if !resolved.starts_with(&output_root) {
+            if !resolved.starts_with(&output_directory) {
                 return Err(StorageError::InvalidPath(relative));
             }
             if resolved.exists() {
-                let canonical = resolved.canonicalize()?;
+                let canonical = strip_extended_length_prefix(resolved.canonicalize()?);
                 if !canonical.starts_with(&output_root) {
                     return Err(StorageError::InvalidPath(relative));
                 }
@@ -956,7 +957,7 @@ impl ProjectStore {
 }
 
 fn prune_empty_output_directories(layout: &ProjectLayout, path: &Path) -> StorageResult<()> {
-    let output_root = layout.output_directory().canonicalize()?;
+    let output_root = strip_extended_length_prefix(layout.output_directory().canonicalize()?);
     let mut parent = path.parent().map(Path::to_owned);
     while let Some(directory) = parent {
         if directory == output_root || !directory.starts_with(&output_root) {
@@ -1117,7 +1118,10 @@ mod tests {
         let reopened = ProjectStore::open(&root).await.unwrap();
         let summary = reopened.summary().await.unwrap();
         assert_eq!(summary.id, id);
-        assert_eq!(summary.root_path, root.canonicalize().unwrap());
+        assert_eq!(
+            summary.root_path,
+            strip_extended_length_prefix(root.canonicalize().unwrap())
+        );
 
         reopened.pool.close().await;
         drop(reopened);

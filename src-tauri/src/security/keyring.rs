@@ -1,3 +1,4 @@
+#[cfg(target_os = "windows")]
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::RwLock;
@@ -74,13 +75,35 @@ impl Keyring for SystemKeyring {
     }
 }
 
-fn entry(key: &CredentialKey) -> Result<keyring::Entry, KeyringError> {
+#[cfg(target_os = "windows")]
+type PlatformEntry = keyring_core::Entry;
+#[cfg(not(target_os = "windows"))]
+type PlatformEntry = keyring::Entry;
+
+#[cfg(target_os = "windows")]
+type PlatformKeyringError = keyring_core::Error;
+#[cfg(not(target_os = "windows"))]
+type PlatformKeyringError = keyring::Error;
+
+#[cfg(target_os = "windows")]
+fn entry(key: &CredentialKey) -> Result<PlatformEntry, KeyringError> {
+    use keyring_core::api::CredentialStoreApi;
+
+    let store = windows_native_keyring_store::Store::new().map_err(map_system_error)?;
+    let modifiers = HashMap::from([("persistence", "Local")]);
+    store
+        .build(&key.service, &key.account, Some(&modifiers))
+        .map_err(map_system_error)
+}
+
+#[cfg(not(target_os = "windows"))]
+fn entry(key: &CredentialKey) -> Result<PlatformEntry, KeyringError> {
     keyring::Entry::new(&key.service, &key.account).map_err(map_system_error)
 }
 
-fn map_system_error(error: keyring::Error) -> KeyringError {
+fn map_system_error(error: PlatformKeyringError) -> KeyringError {
     match error {
-        keyring::Error::NoEntry => KeyringError::NotFound,
+        PlatformKeyringError::NoEntry => KeyringError::NotFound,
         other => KeyringError::Unavailable(other.to_string()),
     }
 }

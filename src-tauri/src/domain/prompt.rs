@@ -9,6 +9,9 @@ pub struct PromptContextSnapshot {
     pub name: String,
     pub content: String,
     pub placement: ContextPlacement,
+    pub prefix_content: String,
+    pub suffix_content: String,
+    pub negative_content: String,
     pub sort_order: i32,
 }
 
@@ -17,13 +20,14 @@ pub struct PromptContextSnapshot {
 pub struct ComposedPrompt {
     pub raw_prompt: String,
     pub final_prompt: String,
+    pub negative_prompt: String,
     pub contexts: Vec<PromptContextSnapshot>,
 }
 
 pub fn compose_prompt(raw_prompt: &str, contexts: &[PromptContext]) -> ComposedPrompt {
     let mut active: Vec<_> = contexts
         .iter()
-        .filter(|context| context.enabled && !context.content.trim().is_empty())
+        .filter(|context| context.enabled && context.has_content())
         .collect();
     active.sort_by(|left, right| {
         left.sort_order
@@ -38,14 +42,18 @@ pub fn compose_prompt(raw_prompt: &str, contexts: &[PromptContext]) -> ComposedP
             name: context.name.clone(),
             content: context.content.trim().to_owned(),
             placement: context.placement,
+            prefix_content: context.resolved_prefix().trim().to_owned(),
+            suffix_content: context.resolved_suffix().trim().to_owned(),
+            negative_content: context.negative_content.trim().to_owned(),
             sort_order: context.sort_order,
         })
         .collect::<Vec<_>>();
 
     let mut fragments = active
         .iter()
-        .filter(|context| context.placement == ContextPlacement::Prepend)
-        .map(|context| context.content.trim().to_owned())
+        .map(|context| context.resolved_prefix().trim())
+        .filter(|content| !content.is_empty())
+        .map(ToOwned::to_owned)
         .collect::<Vec<_>>();
     if !raw_prompt.trim().is_empty() {
         fragments.push(raw_prompt.trim().to_owned());
@@ -53,13 +61,21 @@ pub fn compose_prompt(raw_prompt: &str, contexts: &[PromptContext]) -> ComposedP
     fragments.extend(
         active
             .iter()
-            .filter(|context| context.placement == ContextPlacement::Append)
-            .map(|context| context.content.trim().to_owned()),
+            .map(|context| context.resolved_suffix().trim())
+            .filter(|content| !content.is_empty())
+            .map(ToOwned::to_owned),
     );
+    let negative_prompt = active
+        .iter()
+        .map(|context| context.negative_content.trim())
+        .filter(|content| !content.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n");
 
     ComposedPrompt {
         raw_prompt: raw_prompt.to_owned(),
         final_prompt: fragments.join("\n\n"),
+        negative_prompt,
         contexts: snapshots,
     }
 }
@@ -76,6 +92,9 @@ mod tests {
             name: id.to_owned(),
             content: content.to_owned(),
             placement,
+            prefix_content: String::new(),
+            suffix_content: String::new(),
+            negative_content: String::new(),
             sort_order: order,
             enabled: true,
             created_at: Utc::now(),
@@ -110,5 +129,25 @@ mod tests {
 
         assert_eq!(composed.final_prompt, "subject");
         assert!(composed.contexts.is_empty());
+    }
+
+    #[test]
+    fn composes_all_context_parts_in_stable_group_order() {
+        let mut first = context("first", "", ContextPlacement::Prepend, 0);
+        first.prefix_content = "prefix one".to_owned();
+        first.suffix_content = "suffix one".to_owned();
+        first.negative_content = "negative one".to_owned();
+        let mut second = context("second", "", ContextPlacement::Prepend, 1);
+        second.prefix_content = "prefix two".to_owned();
+        second.suffix_content = "suffix two".to_owned();
+        second.negative_content = "negative two".to_owned();
+
+        let composed = compose_prompt("subject", &[second, first]);
+
+        assert_eq!(
+            composed.final_prompt,
+            "prefix one\n\nprefix two\n\nsubject\n\nsuffix one\n\nsuffix two"
+        );
+        assert_eq!(composed.negative_prompt, "negative one\nnegative two");
     }
 }

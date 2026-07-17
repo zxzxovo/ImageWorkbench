@@ -529,6 +529,12 @@ pub struct PromptContext {
     pub name: String,
     pub content: String,
     pub placement: ContextPlacement,
+    #[serde(default)]
+    pub prefix_content: String,
+    #[serde(default)]
+    pub suffix_content: String,
+    #[serde(default)]
+    pub negative_content: String,
     pub sort_order: i32,
     pub enabled: bool,
     pub created_at: DateTime<Utc>,
@@ -538,16 +544,50 @@ pub struct PromptContext {
 impl PromptContext {
     pub fn new(name: impl Into<String>, content: impl Into<String>) -> Self {
         let now = Utc::now();
+        let content = content.into();
         Self {
             id: Uuid::new_v4().to_string(),
             name: name.into(),
-            content: content.into(),
+            content: content.clone(),
             placement: ContextPlacement::Prepend,
+            prefix_content: content,
+            suffix_content: String::new(),
+            negative_content: String::new(),
             sort_order: 0,
             enabled: true,
             created_at: now,
             updated_at: now,
         }
+    }
+
+    pub fn resolved_prefix(&self) -> &str {
+        if self.prefix_content.is_empty()
+            && self.suffix_content.is_empty()
+            && self.negative_content.is_empty()
+            && self.placement == ContextPlacement::Prepend
+        {
+            &self.content
+        } else {
+            &self.prefix_content
+        }
+    }
+
+    pub fn resolved_suffix(&self) -> &str {
+        if self.prefix_content.is_empty()
+            && self.suffix_content.is_empty()
+            && self.negative_content.is_empty()
+            && self.placement == ContextPlacement::Append
+        {
+            &self.content
+        } else {
+            &self.suffix_content
+        }
+    }
+
+    pub fn has_content(&self) -> bool {
+        !self.resolved_prefix().trim().is_empty()
+            || !self.resolved_suffix().trim().is_empty()
+            || !self.negative_content.trim().is_empty()
     }
 }
 

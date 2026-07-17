@@ -1,6 +1,7 @@
 import { For, Match, Show, Switch, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
 import { createStore } from "solid-js/store";
 import {
+  Bug,
   FolderOpen,
   FolderPlus,
   History,
@@ -15,6 +16,7 @@ import {
 } from "lucide-solid";
 import appIcon from "./assets/app-icon.png";
 import CreatorPage from "./components/CreatorPage";
+import DiagnosticsModal, { type AppErrorEntry } from "./components/DiagnosticsModal";
 import {
   DescriptionsPage,
   HistoryPage,
@@ -26,10 +28,10 @@ import ProjectModal from "./components/ProjectModal";
 import ProviderModal from "./components/ProviderModal";
 import { IconButton, StatusDot } from "./components/common";
 import { demoWorkspace, initialDraft, starterProviders } from "./data/demo";
-import { api, formatError } from "./lib/api";
+import { api, normalizeError } from "./lib/api";
 import { translate, type TranslationKey } from "./lib/i18n";
 import { getModelCapabilities } from "./lib/models";
-import { normalizeDraftForModel } from "./lib/prompt";
+import { composeNegativePrompt, normalizeDraftForModel } from "./lib/prompt";
 import type {
   GenerationPreset,
   GenerationTask,
@@ -99,7 +101,8 @@ export default function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = createSignal(false);
   const [hydrated, setHydrated] = createSignal(false);
   const [backendError, setBackendError] = createSignal("");
-  const [errorDetailOpen, setErrorDetailOpen] = createSignal(false);
+  const [diagnosticsOpen, setDiagnosticsOpen] = createSignal(false);
+  const [errorEntries, setErrorEntries] = createSignal<AppErrorEntry[]>([]);
   const [notice, setNotice] = createSignal("");
   const [queuePaused, setQueuePaused] = createSignal(false);
   const [queueControlBusy, setQueueControlBusy] = createSignal(false);
@@ -112,6 +115,20 @@ export default function App() {
   const loadedProjectIds = new Set<string>();
   const [draft, setDraft] = createStore({ ...normalizedInitialDraft, references: [...normalizedInitialDraft.references] });
   const t = (key: TranslationKey) => translate(locale(), key);
+  const recordError = (error: unknown, context: string) => {
+    const normalized = normalizeError(error);
+    const entry: AppErrorEntry = {
+      id: crypto.randomUUID(),
+      occurredAt: new Date().toISOString(),
+      context,
+      code: normalized.code,
+      message: normalized.message,
+      details: normalized.details,
+    };
+    setBackendError(normalized.code === "error" ? normalized.message : `[${normalized.code}] ${normalized.message}`);
+    setErrorEntries((items) => [entry, ...items].slice(0, 50));
+  };
+  const recordMessage = (message: string, context: string, code = "error") => recordError({ code, message }, context);
   const project = createMemo(() => projects().find((item) => item.id === activeProjectId()) ?? projects()[0]);
   const projectHistoryCount = (projectId: string) => history().filter((item) => item.projectId === projectId && item.status === "completed").reduce((total, item) => total + item.assets.length, 0);
 
@@ -163,7 +180,7 @@ export default function App() {
         setHistory((items) => items.map(applyResult));
       }
     } catch (error) {
-      setBackendError(formatError(error));
+      recordError(error, "remote_tasks.poll");
     } finally {
       remotePollsInFlight.delete(projectId);
     }
@@ -187,43 +204,56 @@ export default function App() {
     try {
       setQueuePaused(await api.queueStatus());
     } catch (error) {
-      setBackendError(formatError(error));
+      recordError(error, "queue.status");
     }
     try {
       const saved = await api.loadWorkspace();
       if (saved) {
         setLocale(saved.locale);
-        setProjects(saved.projects);
         setProviders(saved.providers);
         setHistory(saved.history);
-        setActiveProjectId(saved.activeProjectId);
-        const savedProject = saved.projects.find((item) => item.id === saved.activeProjectId);
+        let availableProjects = saved.projects;
+        if (!api.isDemo && saved.projects.length > 0) {
+          const results = await Promise.allSettled(saved.projects.map(async (savedItem) => ({
+            project: savedItem,
+            details: await api.loadProjectDetails(savedItem.id),
+          })));
+          const loaded = results.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
+          availableProjects = loaded.map(({ project: savedItem, details }) => ({
+            ...savedItem,
+            descriptions: details.descriptions,
+            presets: details.presets,
+          }));
+          loaded.forEach(({ project: savedItem, details }) => {
+            loadedProjectIds.add(savedItem.id);
+            mergePortableHistory(details.history);
+          });
+          results.forEach((result, index) => {
+            if (result.status === "rejected") {
+              recordError(result.reason, `workspace.reopen:${saved.projects[index].name}`);
+            }
+          });
+        }
+        setProjects(availableProjects);
+        const restoredActiveId = availableProjects.some((item) => item.id === saved.activeProjectId)
+          ? saved.activeProjectId
+          : availableProjects[0]?.id ?? "";
+        setActiveProjectId(restoredActiveId);
+        const savedProject = availableProjects.find((item) => item.id === restoredActiveId);
         if (savedProject) {
           const savedProvider = saved.providers.find((item) => item.id === savedProject.settings.defaultProviderId)
             ?? saved.providers.find((item) => item.enabled)
             ?? saved.providers[0];
           setDraftProviderModel(savedProvider, savedProject.settings.defaultModel);
         }
-        if (!api.isDemo && saved.projects.length > 0) {
-          void Promise.all(saved.projects.map(async (savedItem) => ({ id: savedItem.id, details: await api.loadProjectDetails(savedItem.id) })))
-            .then((loaded) => {
-              loaded.forEach((entry) => loadedProjectIds.add(entry.id));
-              setProjects((items) => items.map((item) => {
-                const match = loaded.find((entry) => entry.id === item.id);
-                return match ? { ...item, descriptions: match.details.descriptions, presets: match.details.presets } : item;
-              }));
-              loaded.forEach((entry) => mergePortableHistory(entry.details.history));
-            })
-            .catch((error: unknown) => setBackendError(formatError(error)));
-        }
-        void pollProjectRemoteTasks(saved.activeProjectId);
-        if (!api.isDemo && saved.projects.length === 0) setProjectModalOpen(true);
+        if (restoredActiveId) void pollProjectRemoteTasks(restoredActiveId);
+        if (!api.isDemo && availableProjects.length === 0) setProjectModalOpen(true);
       } else if (!api.isDemo) {
         setProjectModalOpen(true);
       }
       setHydrated(true);
     } catch (error) {
-      setBackendError(formatError(error));
+      recordError(error, "workspace.load");
     }
   });
 
@@ -237,7 +267,7 @@ export default function App() {
       history: history(),
     };
     void api.saveWorkspace(snapshot).catch((error: unknown) => {
-      setBackendError(formatError(error));
+      recordError(error, "workspace.save");
     });
   });
 
@@ -245,6 +275,7 @@ export default function App() {
     if (event.key !== "Escape") return;
     setProviderModalOpen(false);
     setProjectModalOpen(false);
+    setDiagnosticsOpen(false);
   };
   onMount(() => window.addEventListener("keydown", closeMenus));
   onCleanup(() => window.removeEventListener("keydown", closeMenus));
@@ -278,7 +309,7 @@ export default function App() {
         return task;
       }));
     }).then((unlisten) => { unlistenGenerationEvents = unlisten; }).catch((error: unknown) => {
-      setBackendError(formatError(error));
+      recordError(error, "generation.events");
     });
   });
   onCleanup(() => unlistenGenerationEvents?.());
@@ -305,7 +336,9 @@ export default function App() {
         loadedProjectIds.add(projectId);
         setProjects((items) => items.map((item) => item.id === projectId ? { ...item, descriptions: details.descriptions, presets: details.presets } : item));
         mergePortableHistory(details.history);
-      }).catch((error: unknown) => setBackendError(formatError(error)));
+        void pollProjectRemoteTasks(projectId);
+      }).catch((error: unknown) => recordError(error, "project.load_details"));
+      return;
     }
     void pollProjectRemoteTasks(projectId);
   };
@@ -314,6 +347,12 @@ export default function App() {
     setProviders((items) => items.some((item) => item.id === provider.id)
       ? items.map((item) => item.id === provider.id ? provider : item)
       : [...items, provider]);
+    setProjects((items) => items.map((item) => item.settings.defaultProviderId === provider.id && !provider.models.includes(item.settings.defaultModel)
+      ? { ...item, settings: { ...item.settings, defaultModel: provider.models[0] ?? "" } }
+      : item));
+    if (draft.providerId === provider.id && !provider.models.includes(draft.model)) {
+      setDraftProviderModel(provider, provider.models[0] ?? "");
+    }
     if (!draft.providerId) {
       setDraftProviderModel(provider, provider.models[0] ?? "");
     }
@@ -323,7 +362,7 @@ export default function App() {
     try {
       if (!(await api.deleteProvider(providerId))) return false;
     } catch (error) {
-      setBackendError(formatError(error));
+      recordError(error, "provider.delete");
       return false;
     }
     const remaining = providers().filter((item) => item.id !== providerId);
@@ -333,7 +372,7 @@ export default function App() {
     if (dependentProjects.length > 0) {
       if (fallback) {
         void Promise.all(dependentProjects.map((item) => api.remapProjectProvider(item.id, providerId, fallback.id)))
-          .catch((error: unknown) => setBackendError(formatError(error)));
+          .catch((error: unknown) => recordError(error, "project.remap_provider"));
       }
       setProjects((items) => items.map((item) => item.settings.defaultProviderId === providerId ? {
         ...item,
@@ -348,59 +387,69 @@ export default function App() {
     return true;
   };
 
-  const createProject = (nextProject: Project) => {
-    loadedProjectIds.add(nextProject.id);
-    setProjects((items) => [nextProject, ...items]);
-    selectProject(nextProject.id);
-    setProjectModalOpen(false);
+  const createProject = async (nextProject: Project) => {
+    try {
+      await api.createProject(nextProject);
+      loadedProjectIds.add(nextProject.id);
+      setProjects((items) => [nextProject, ...items]);
+      selectProject(nextProject.id);
+      setProjectModalOpen(false);
+    } catch (error) {
+      recordError(error, "project.create");
+      throw error;
+    }
   };
 
   const openProject = async () => {
-    const summary = await api.openProject();
-    if (!summary) return;
-    const details = await api.loadProjectDetails(summary.id);
-    loadedProjectIds.add(summary.id);
-    mergePortableHistory(details.history);
-    const mappedProvider = providers().find((item) => item.id === summary.defaultProviderProfileId);
-    const provider = mappedProvider
-      ?? providers().find((item) => item.enabled)
-      ?? providers()[0];
-    const defaultModel = summary.defaultModelId && provider?.models.includes(summary.defaultModelId)
-      ? summary.defaultModelId
-      : provider?.models[0] ?? "";
-    if (summary.defaultProviderProfileId && !mappedProvider && provider) {
-      await api.remapProjectProvider(summary.id, summary.defaultProviderProfileId, provider.id);
+    try {
+      const summary = await api.openProject();
+      if (!summary) return;
+      const details = await api.loadProjectDetails(summary.id);
+      loadedProjectIds.add(summary.id);
+      mergePortableHistory(details.history);
+      const mappedProvider = providers().find((item) => item.id === summary.defaultProviderProfileId);
+      const provider = mappedProvider
+        ?? providers().find((item) => item.enabled)
+        ?? providers()[0];
+      const defaultModel = summary.defaultModelId && provider?.models.includes(summary.defaultModelId)
+        ? summary.defaultModelId
+        : provider?.models[0] ?? "";
+      if (summary.defaultProviderProfileId && !mappedProvider && provider) {
+        await api.remapProjectProvider(summary.id, summary.defaultProviderProfileId, provider.id);
+      }
+      const openedProject: Project = {
+        id: summary.id,
+        name: summary.name,
+        description: "",
+        storagePath: summary.rootPath,
+        color: "#4e6e9c",
+        createdAt: summary.createdAt,
+        updatedAt: summary.updatedAt,
+        descriptions: details.descriptions,
+        presets: details.presets,
+        settings: {
+          useCommonDescriptions: false,
+          saveMetadata: true,
+          saveRawResponse: false,
+          autoOpenFolder: false,
+          namingPattern: "{date}_{model}_{index}",
+          defaultProviderId: provider?.id ?? "",
+          defaultModel,
+          flatOutput: false,
+          defaultStream: null,
+        },
+      };
+      setProjects((items) => items.some((item) => item.id === openedProject.id)
+        ? items.map((item) => item.id === openedProject.id ? { ...item, ...openedProject } : item)
+        : [openedProject, ...items]);
+      if (summary.defaultProviderProfileId && !mappedProvider) {
+        setNotice(t("providerRemapped"));
+        window.setTimeout(() => setNotice(""), 4200);
+      }
+      selectProject(openedProject.id);
+    } catch (error) {
+      recordError(error, "project.open");
     }
-    const openedProject: Project = {
-      id: summary.id,
-      name: summary.name,
-      description: "",
-      storagePath: summary.rootPath,
-      color: "#4e6e9c",
-      createdAt: summary.createdAt,
-      updatedAt: summary.updatedAt,
-      descriptions: details.descriptions,
-      presets: details.presets,
-      settings: {
-        useCommonDescriptions: false,
-        saveMetadata: true,
-        saveRawResponse: false,
-        autoOpenFolder: false,
-        namingPattern: "{date}_{model}_{index}",
-        defaultProviderId: provider?.id ?? "",
-        defaultModel,
-        flatOutput: false,
-        defaultStream: null,
-      },
-    };
-    setProjects((items) => items.some((item) => item.id === openedProject.id)
-      ? items.map((item) => item.id === openedProject.id ? { ...item, ...openedProject } : item)
-      : [openedProject, ...items]);
-    if (summary.defaultProviderProfileId && !mappedProvider) {
-      setNotice(t("providerRemapped"));
-      window.setTimeout(() => setNotice(""), 4200);
-    }
-    selectProject(openedProject.id);
   };
 
   const updateProject = (nextProject: Project) => {
@@ -420,7 +469,7 @@ export default function App() {
     void Promise.all([
       ...deleted.map((item) => api.deletePromptContext(currentProject.id, item.id)),
       ...nextDescriptions.map((item, index) => api.upsertPromptContext(currentProject.id, item, index)),
-    ]).catch((error: unknown) => setBackendError(formatError(error)));
+    ]).catch((error: unknown) => recordError(error, "descriptions.save"));
     updateActiveProject((item) => ({ ...item, descriptions: nextDescriptions, updatedAt: new Date().toISOString() }));
   };
 
@@ -431,7 +480,7 @@ export default function App() {
     void Promise.all([
       ...deleted.map((item) => api.deleteGenerationPreset(currentProject.id, item.id)),
       ...nextPresets.map((item) => api.upsertGenerationPreset(currentProject.id, item)),
-    ]).catch((error: unknown) => setBackendError(formatError(error)));
+    ]).catch((error: unknown) => recordError(error, "presets.save"));
     updateActiveProject((item) => ({ ...item, presets: nextPresets, updatedAt: new Date().toISOString() }));
   };
 
@@ -453,8 +502,14 @@ export default function App() {
       flatOutput: draft.flatOutput || currentProject.settings.flatOutput,
     };
     const contextSnapshot = replayContexts ?? (currentProject.settings.useCommonDescriptions
-      ? currentProject.descriptions.filter((item) => item.enabled && item.content.trim())
+      ? currentProject.descriptions.filter((item) => item.enabled && (item.prefixContent.trim() || item.suffixContent.trim() || item.negativeContent.trim()))
       : []);
+    const effectiveNegativePrompt = composeNegativePrompt(
+      draft.negativePrompt,
+      contextSnapshot,
+      true,
+    );
+    const commandDraft = { ...requestDraft, negativePrompt: effectiveNegativePrompt };
     const presetSnapshot = replayPreset ?? currentProject.presets.find((item) => item.id === activePresetId());
     const taskId = crypto.randomUUID();
     const createdAt = new Date().toISOString();
@@ -487,7 +542,8 @@ export default function App() {
         projectId: currentProject.id,
         storagePath: currentProject.storagePath,
         provider,
-        draft: requestDraft,
+        draft: commandDraft,
+        manualNegativePrompt: draft.negativePrompt,
         composedPrompt: effectivePrompt,
         contextIds: contextSnapshot.map((item) => item.id),
         presetId: activePresetId(),
@@ -527,11 +583,15 @@ export default function App() {
         presetSnapshot,
       }, ...items]);
       updateActiveProject((item) => ({ ...item, updatedAt: new Date().toISOString() }));
-      if (currentProject.settings.autoOpenFolder) void api.revealPath(currentProject.storagePath);
+      if (currentProject.settings.autoOpenFolder) {
+        void api.revealPath(currentProject.storagePath).catch((error: unknown) => recordError(error, "project.auto_reveal"));
+      }
     } catch (error) {
+      const normalized = normalizeError(error);
       const message = cancelledTaskIds.has(taskId)
         ? "Cancelled"
-        : formatError(error);
+        : normalized.code === "error" ? normalized.message : `[${normalized.code}] ${normalized.message}`;
+      if (!cancelledTaskIds.has(taskId)) recordError(error, "generation.execute");
       setTasks((items) => items.map((item) => item.id === taskId ? { ...item, status: "failed", error: message } : item));
       setHistory((items) => [{
         ...task,
@@ -565,7 +625,7 @@ export default function App() {
       }
     } catch (error) {
       setQueuePaused(previous);
-      setBackendError(formatError(error));
+      recordError(error, "queue.toggle");
     } finally {
       setQueueControlBusy(false);
     }
@@ -577,7 +637,7 @@ export default function App() {
     setTasks((items) => items.map((item) => item.id === taskId ? { ...item, status: "failed", error: "Cancelled", progress: item.progress } : item));
     const taskProjectId = tasks().find((item) => item.id === taskId)?.projectId ?? project()?.id;
     void api.cancelRun(taskId, taskProjectId).catch((error: unknown) => {
-      setBackendError(formatError(error));
+      recordError(error, "task.cancel");
     });
   };
 
@@ -587,9 +647,9 @@ export default function App() {
     try {
       const result = await api.deleteHistory(record.projectId, recordId);
       if (result.deletedRuns > 0) setHistory((items) => items.filter((item) => item.id !== recordId));
-      if (result.failures.length > 0) setBackendError(result.failures.map((item) => item.message).join("; "));
+      if (result.failures.length > 0) recordMessage(result.failures.map((item) => item.message).join("; "), "history.delete", "lifecycle_failure");
     } catch (error) {
-      setBackendError(formatError(error));
+      recordError(error, "history.delete");
     }
   };
 
@@ -600,7 +660,7 @@ export default function App() {
         const result = await api.deleteHistory(record.projectId, record.id);
         if (result.deletedRuns > 0) setHistory((items) => items.filter((item) => item.id !== record.id));
       } catch (error) {
-        setBackendError(formatError(error));
+        recordError(error, "history.delete_failed");
         break;
       }
     }
@@ -610,13 +670,13 @@ export default function App() {
     try {
       const result = await api.clearHistory(projectId);
       if (result.deletedRuns > 0 || api.isDemo) setHistory((items) => items.filter((item) => item.projectId !== projectId));
-      if (result.failures.length > 0) setBackendError(result.failures.map((item) => item.message).join("; "));
+      if (result.failures.length > 0) recordMessage(result.failures.map((item) => item.message).join("; "), "history.clear", "lifecycle_failure");
     } catch (error) {
-      setBackendError(formatError(error));
+      recordError(error, "history.clear");
     }
   };
 
-  const rerun = async (record: HistoryRecord) => {
+  const restoreHistoryDraft = async (record: HistoryRecord) => {
     if (record.capabilityRegistryVersion && record.capabilityRegistryVersion !== CAPABILITY_REGISTRY_VERSION) {
       setNotice(t("capabilityVersionChanged"));
       window.setTimeout(() => setNotice(""), 6000);
@@ -651,20 +711,32 @@ export default function App() {
     setActiveTab("create");
   };
 
-  const continueEditing = async (record: HistoryRecord) => {
-    await rerun(record);
-    if (!record.interactionId) return;
-    const recordProvider = providers().find((item) => item.id === record.providerId);
-    if (recordProvider?.kind === "gemini") {
-      setDraft("useInteractionsApi", true);
-      setDraft("previousInteractionId", record.interactionId);
-    } else if (recordProvider?.kind === "openai" || recordProvider?.kind === "custom") {
-      setDraft("useResponsesApi", true);
-      setDraft("previousResponseId", record.interactionId);
+  const rerun = async (record: HistoryRecord) => {
+    try {
+      await restoreHistoryDraft(record);
+    } catch (error) {
+      recordError(error, "history.restore");
     }
-    setComposedPromptOverride(undefined);
-    setContextSnapshotOverride(undefined);
-    setPresetSnapshotOverride(undefined);
+  };
+
+  const continueEditing = async (record: HistoryRecord) => {
+    try {
+      await restoreHistoryDraft(record);
+      if (!record.interactionId) return;
+      const recordProvider = providers().find((item) => item.id === record.providerId);
+      if (recordProvider?.kind === "gemini") {
+        setDraft("useInteractionsApi", true);
+        setDraft("previousInteractionId", record.interactionId);
+      } else if (recordProvider?.kind === "openai" || recordProvider?.kind === "custom") {
+        setDraft("useResponsesApi", true);
+        setDraft("previousResponseId", record.interactionId);
+      }
+      setComposedPromptOverride(undefined);
+      setContextSnapshotOverride(undefined);
+      setPresetSnapshotOverride(undefined);
+    } catch (error) {
+      recordError(error, "history.continue");
+    }
   };
 
   const applyPreset = (preset: GenerationPreset) => {
@@ -726,24 +798,20 @@ export default function App() {
           <div class="topbar-spacer" />
           <Show when={api.isDemo}><span class="demo-badge" title={t("localDemoHint")}><StatusDot status="busy" />{t("localDemo")}</span></Show>
           <Show when={backendError()}>
-            <span class="backend-error-badge" onClick={() => setErrorDetailOpen((v) => !v)}>
+            <span class="backend-error-badge" onClick={() => setDiagnosticsOpen(true)}>
               <StatusDot status="offline" />
               <span class="backend-error-text">{backendError()}</span>
               <button
                 type="button"
                 class="backend-error-close"
                 title={t("dismissError")}
-                onClick={(e) => { e.stopPropagation(); setBackendError(""); setErrorDetailOpen(false); }}
+                onClick={(e) => { e.stopPropagation(); setBackendError(""); }}
               ><X size={13} /></button>
             </span>
-            <Show when={errorDetailOpen()}>
-              <div class="error-detail-popover">
-                <pre class="error-detail-text">{backendError()}</pre>
-              </div>
-            </Show>
           </Show>
           <Show when={notice()}><span class="notice-badge">{notice()}</span></Show>
           <div class="language-switch" title={t("language")}><Languages size={15} /><button type="button" class={locale() === "zh-CN" ? "is-active" : ""} onClick={() => setLocale("zh-CN")}>中</button><button type="button" class={locale() === "en-US" ? "is-active" : ""} onClick={() => setLocale("en-US")}>EN</button></div>
+          <IconButton label={t("diagnostics")} onClick={() => setDiagnosticsOpen(true)}><Bug size={17} /></IconButton>
           <IconButton label={t("manageProviders")} onClick={() => setProviderModalOpen(true)}><SlidersHorizontal size={17} /></IconButton>
         </header>
 
@@ -781,18 +849,19 @@ export default function App() {
                     onCancelTask={cancelTask}
                     onToggleQueue={() => void toggleQueue()}
                     onManageProviders={() => setProviderModalOpen(true)}
+                    onError={recordError}
                     onReveal={(path) => void api.revealPath(projectAssetPath(currentProject().storagePath, path)).catch((error: unknown) => {
-                      setBackendError(formatError(error));
+                      recordError(error, "asset.reveal");
                     })}
                     onDownload={(asset) => {
                       if (!asset.filePath) {
-                        setBackendError(t("noLocalFile"));
+                        recordMessage(t("noLocalFile"), "asset.export", "no_local_file");
                         return;
                       }
                       const sourcePath = projectAssetPath(currentProject().storagePath, asset.filePath);
                       const suggestedName = asset.filePath.split(/[\\/]/).at(-1) || `${asset.id}.${asset.format}`;
                       void api.exportAsset(sourcePath, suggestedName, asset.url).catch((error: unknown) => {
-                        setBackendError(formatError(error));
+                        recordError(error, "asset.export");
                       });
                     }}
                   />
@@ -816,13 +885,14 @@ export default function App() {
                     providers={providers()}
                     history={history()}
                     t={t}
-                    onReveal={(path) => void api.revealPath(projectAssetPath(currentProject().storagePath, path)).catch((error: unknown) => setBackendError(formatError(error)))}
-                    onOpenFolder={() => void api.revealPath(currentProject().storagePath).catch((error: unknown) => setBackendError(formatError(error)))}
+                    onError={recordError}
+                    onReveal={(path) => void api.revealPath(projectAssetPath(currentProject().storagePath, path)).catch((error: unknown) => recordError(error, "asset.reveal"))}
+                    onOpenFolder={() => void api.revealPath(currentProject().storagePath).catch((error: unknown) => recordError(error, "project.reveal"))}
                     onDownload={(asset) => {
-                      if (!asset.filePath) { setBackendError(t("noLocalFile")); return; }
+                      if (!asset.filePath) { recordMessage(t("noLocalFile"), "asset.export", "no_local_file"); return; }
                       const sourcePath = projectAssetPath(currentProject().storagePath, asset.filePath);
                       const suggestedName = asset.filePath.split(/[\\/]/).at(-1) || `${asset.id}.${asset.format}`;
-                      void api.exportAsset(sourcePath, suggestedName, asset.url).catch((error: unknown) => setBackendError(formatError(error)));
+                      void api.exportAsset(sourcePath, suggestedName, asset.url).catch((error: unknown) => recordError(error, "asset.export"));
                     }}
                   />
                 </Match>
@@ -833,7 +903,7 @@ export default function App() {
                   <PresetsPage project={currentProject()} providers={providers()} t={t} onChange={changePresets} onApply={applyPreset} />
                 </Match>
                 <Match when={activeTab() === "project-settings"}>
-                  <ProjectSettingsPage project={currentProject()} providers={providers()} t={t} onChange={updateProject} onClearHistory={() => void clearProjectHistory(currentProject().id)} />
+                  <ProjectSettingsPage project={currentProject()} providers={providers()} t={t} onError={recordError} onChange={updateProject} onClearHistory={() => void clearProjectHistory(currentProject().id)} />
                 </Match>
               </Switch>
             )}
@@ -841,8 +911,9 @@ export default function App() {
         </section>
       </section>
 
-      <ProviderModal open={providerModalOpen()} providers={providers()} t={t} onClose={() => setProviderModalOpen(false)} onUpsert={upsertProvider} onDelete={deleteProvider} />
-      <ProjectModal open={projectModalOpen()} providers={providers()} t={t} onClose={() => setProjectModalOpen(false)} onCreate={createProject} />
+      <DiagnosticsModal open={diagnosticsOpen()} errors={errorEntries()} t={t} onClose={() => setDiagnosticsOpen(false)} onClearErrors={() => setErrorEntries([])} />
+      <ProviderModal open={providerModalOpen()} providers={providers()} t={t} onClose={() => setProviderModalOpen(false)} onUpsert={upsertProvider} onDelete={deleteProvider} onError={recordError} />
+      <ProjectModal open={projectModalOpen()} providers={providers()} t={t} onClose={() => setProjectModalOpen(false)} onCreate={createProject} onError={recordError} />
     </main>
   );
 }

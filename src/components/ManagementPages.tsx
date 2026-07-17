@@ -1,6 +1,8 @@
 import { For, Show, createMemo, createSignal } from "solid-js";
 import { createStore } from "solid-js/store";
 import {
+  ArrowDown,
+  ArrowUp,
   CalendarDays,
   Check,
   Clipboard,
@@ -26,7 +28,7 @@ import {
   Trash2,
   GitCompare,
 } from "lucide-solid";
-import { api } from "../lib/api";
+import { api, formatError } from "../lib/api";
 import type { TranslationKey } from "../lib/i18n";
 import { getModelLabel, getModelsForProvider } from "../lib/models";
 import type {
@@ -45,6 +47,7 @@ interface BaseProps {
   project: Project;
   providers: ProviderProfile[];
   t: (key: TranslationKey) => string;
+  onError?: (error: unknown, context: string) => void;
 }
 
 export function HistoryPage(props: BaseProps & {
@@ -243,9 +246,10 @@ export function DescriptionsPage(props: BaseProps & {
   const [draft, setDraft] = createStore<CommonDescription>({
     id: "",
     title: "",
-    content: "",
+    prefixContent: "",
+    suffixContent: "",
+    negativeContent: "",
     enabled: true,
-    placement: "suffix",
     createdAt: new Date().toISOString(),
   });
 
@@ -258,9 +262,10 @@ export function DescriptionsPage(props: BaseProps & {
     const item: CommonDescription = {
       id: crypto.randomUUID(),
       title: props.t("addDescription"),
-      content: "",
+      prefixContent: "",
+      suffixContent: "",
+      negativeContent: "",
       enabled: true,
-      placement: "suffix",
       createdAt: new Date().toISOString(),
     };
     props.onChange([...props.project.descriptions, item]);
@@ -281,6 +286,20 @@ export function DescriptionsPage(props: BaseProps & {
     }
   };
 
+  const move = (offset: -1 | 1) => {
+    const index = props.project.descriptions.findIndex((item) => item.id === draft.id);
+    const target = index + offset;
+    if (index < 0 || target < 0 || target >= props.project.descriptions.length) return;
+    const next = [...props.project.descriptions];
+    [next[index], next[target]] = [next[target], next[index]];
+    props.onChange(next);
+  };
+
+  const descriptionPreview = (item: CommonDescription) => [item.prefixContent, item.suffixContent, item.negativeContent]
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .join(" / ");
+
   return (
     <div class="page management-page">
       <header class="page-header"><div><h1>{props.t("descriptionTitle")}</h1><p>{props.t("descriptionSubtitle")}</p></div><button class="button primary" type="button" onClick={add}><Plus size={16} />{props.t("addDescription")}</button></header>
@@ -289,8 +308,12 @@ export function DescriptionsPage(props: BaseProps & {
           <For each={props.project.descriptions}>
             {(item) => (
               <button type="button" class={`manager-list-item ${selectedId() === item.id ? "is-selected" : ""}`} onClick={() => select(item)}>
-                <span class={`description-placement placement-${item.placement}`}>{item.placement === "prefix" ? props.t("prefix") : props.t("suffix")}</span>
-                <span><strong>{item.title}</strong><small>{item.content || "-"}</small></span>
+                <span class="description-part-badges">
+                  <Show when={item.prefixContent.trim()}><small class="placement-prefix">P</small></Show>
+                  <Show when={item.suffixContent.trim()}><small class="placement-suffix">S</small></Show>
+                  <Show when={item.negativeContent.trim()}><small class="placement-negative">N</small></Show>
+                </span>
+                <span><strong>{item.title}</strong><small>{descriptionPreview(item) || "-"}</small></span>
                 <span class={`enabled-indicator ${item.enabled ? "is-enabled" : ""}`}><Check size={12} /></span>
               </button>
             )}
@@ -299,11 +322,24 @@ export function DescriptionsPage(props: BaseProps & {
         </aside>
         <section class="manager-editor">
           <Show when={selectedId()} fallback={<EmptyState icon={<SlidersHorizontal size={24} />} title={props.t("addDescription")} />}>
-            <div class="editor-heading"><div><span class="section-kicker">{props.t("edit")}</span><h2>{draft.title}</h2></div><IconButton label={props.t("delete")} onClick={() => remove(draft.id)}><Trash2 size={16} /></IconButton></div>
+            <div class="editor-heading">
+              <div><span class="section-kicker">{props.t("edit")}</span><h2>{draft.title}</h2></div>
+              <div class="editor-heading-actions">
+                <IconButton label={props.t("moveUp")} disabled={props.project.descriptions[0]?.id === draft.id} onClick={() => move(-1)}><ArrowUp size={16} /></IconButton>
+                <IconButton label={props.t("moveDown")} disabled={props.project.descriptions.at(-1)?.id === draft.id} onClick={() => move(1)}><ArrowDown size={16} /></IconButton>
+                <IconButton label={props.t("delete")} onClick={() => remove(draft.id)}><Trash2 size={16} /></IconButton>
+              </div>
+            </div>
             <div class="editor-form">
               <Field label={props.t("name")}><input value={draft.title} onInput={(event) => setDraft("title", event.currentTarget.value)} /></Field>
-              <Field label={props.t("placement")}><div class="segmented"><button type="button" class={draft.placement === "prefix" ? "is-active" : ""} onClick={() => setDraft("placement", "prefix")}>{props.t("prefix")}</button><button type="button" class={draft.placement === "suffix" ? "is-active" : ""} onClick={() => setDraft("placement", "suffix")}>{props.t("suffix")}</button></div></Field>
-              <Field label={props.t("content")}><textarea rows="10" value={draft.content} onInput={(event) => setDraft("content", event.currentTarget.value)} /></Field>
+              <div class="description-content-grid">
+                <Field label={props.t("prefixContent")}><textarea rows="6" value={draft.prefixContent} onInput={(event) => setDraft("prefixContent", event.currentTarget.value)} /></Field>
+                <Field label={props.t("suffixContent")}><textarea rows="6" value={draft.suffixContent} onInput={(event) => setDraft("suffixContent", event.currentTarget.value)} /></Field>
+              </div>
+              <details class="description-extra-settings" open={Boolean(draft.negativeContent)}>
+                <summary><SlidersHorizontal size={15} />{props.t("descriptionExtraSettings")}</summary>
+                <Field label={props.t("negativeContent")}><textarea rows="4" value={draft.negativeContent} onInput={(event) => setDraft("negativeContent", event.currentTarget.value)} /></Field>
+              </details>
               <Toggle checked={draft.enabled} onChange={(value) => setDraft("enabled", value)} label={props.t("enabled")} />
               <div class="editor-actions"><button class="button primary" type="button" onClick={save}><Save size={16} />{props.t("save")}</button></div>
             </div>
@@ -409,10 +445,17 @@ export function ProjectSettingsPage(props: BaseProps & {
   const [draft, setDraft] = createStore<Project>({ ...props.project, settings: { ...props.project.settings } });
   const defaultProvider = createMemo(() => props.providers.find((item) => item.id === draft.settings.defaultProviderId));
   const [saved, setSaved] = createSignal(false);
+  const [folderError, setFolderError] = createSignal("");
 
   const chooseFolder = async () => {
-    const path = await api.chooseDirectory(draft.storagePath);
-    if (path) setDraft("storagePath", path);
+    setFolderError("");
+    try {
+      const path = await api.chooseDirectory(draft.storagePath);
+      if (path) setDraft("storagePath", path);
+    } catch (error) {
+      setFolderError(formatError(error));
+      props.onError?.(error, "project_settings.choose_directory");
+    }
   };
 
   const save = () => {
@@ -424,6 +467,7 @@ export function ProjectSettingsPage(props: BaseProps & {
   return (
     <div class="page management-page settings-page">
       <header class="page-header"><div><h1>{props.t("projectSettings")}</h1><p>{props.project.name}</p></div><button class="button primary" type="button" onClick={save}><Show when={saved()} fallback={<Save size={16} />}><Check size={16} /></Show>{saved() ? props.t("saved") : props.t("save")}</button></header>
+      <Show when={folderError()}><p class="form-error page-form-error" role="alert">{folderError()}</p></Show>
       <div class="settings-layout">
         <section class="settings-section">
           <div class="settings-section-heading"><h2>{props.t("projectInfo")}</h2></div>
@@ -494,25 +538,32 @@ export function ResultsPage(props: BaseProps & {
 
   const [copiedId, setCopiedId] = createSignal<string | null>(null);
   const [viewMode, setViewMode] = createSignal<"grid" | "list">("grid");
+  const [copyError, setCopyError] = createSignal("");
 
   const copyImage = async (asset: GeneratedAsset, assetUrl: string) => {
+    setCopyError("");
     try {
       const img = new Image();
       img.crossOrigin = "anonymous";
-      await new Promise<void>((resolve, reject) => { img.onload = () => resolve(); img.onerror = reject; img.src = assetUrl; });
+      await new Promise<void>((resolve, reject) => {
+        img.onload = () => resolve();
+        img.onerror = () => reject(new Error(props.t("copyImageFailed")));
+        img.src = assetUrl;
+      });
       const canvas = document.createElement("canvas");
       canvas.width = img.naturalWidth || 512;
       canvas.height = img.naturalHeight || 512;
       canvas.getContext("2d")!.drawImage(img, 0, 0);
-      await new Promise<void>((resolve, reject) => canvas.toBlob(async (blob) => {
+      const blob = await new Promise<Blob>((resolve, reject) => canvas.toBlob((blob) => {
         if (!blob) { reject(new Error("canvas toBlob failed")); return; }
-        await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
-        resolve();
+        resolve(blob);
       }, "image/png"));
+      await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
       setCopiedId(asset.id);
       window.setTimeout(() => setCopiedId(null), 1800);
-    } catch (_err) {
-      // clipboard write may be blocked in some browsers; fall back silently
+    } catch (error) {
+      setCopyError(formatError(error));
+      props.onError?.(error, "results.copy_image");
     }
   };
 
@@ -548,6 +599,7 @@ export function ResultsPage(props: BaseProps & {
           </button>
         </div>
       </header>
+      <Show when={copyError()}><p class="form-error page-form-error" role="alert">{copyError()}</p></Show>
 
       <Show
         when={allAssets().length > 0}

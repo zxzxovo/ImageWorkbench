@@ -26,7 +26,7 @@ import {
   X,
 } from "lucide-solid";
 import type { TranslationKey } from "../lib/i18n";
-import { api } from "../lib/api";
+import { api, formatError } from "../lib/api";
 import { getModelCapabilities, getModelsForProvider } from "../lib/models";
 import { composePrompt, normalizeDraftForModel, validateGenerationDraft } from "../lib/prompt";
 import type {
@@ -59,6 +59,7 @@ interface CreatorPageProps {
   onCancelTask: (taskId: string) => void;
   onToggleQueue: () => void;
   onManageProviders: () => void;
+  onError: (error: unknown, context: string) => void;
   onReveal: (path: string) => void;
   onDownload: (asset: GeneratedAsset) => void;
 }
@@ -174,6 +175,11 @@ export default function CreatorPage(props: CreatorPageProps) {
           commit();
         }
       };
+      reader.onerror = () => {
+        const error = reader.error ?? new Error(props.t("referenceReadFailed"));
+        setValidationMessage(formatError(error));
+        props.onError(error, "reference.read");
+      };
       reader.readAsDataURL(file);
     });
     referenceInput.value = "";
@@ -193,7 +199,8 @@ export default function CreatorPage(props: CreatorPageProps) {
         role: referenceRole(item.mimeType),
       }));
     } catch (error) {
-      setValidationMessage(error instanceof Error ? error.message : String(error));
+      setValidationMessage(formatError(error));
+      props.onError(error, "reference.import");
     }
   };
 
@@ -665,7 +672,7 @@ export default function CreatorPage(props: CreatorPageProps) {
               <div><SquarePen size={16} /><h2>{props.t("promptEditor")}</h2></div>
             </div>
             <div class="prompt-editor-body">
-              <Show when={props.project.settings.useCommonDescriptions && props.project.descriptions.some((item) => item.enabled && item.content.trim())}>
+              <Show when={props.project.settings.useCommonDescriptions && props.project.descriptions.some((item) => item.enabled && (item.prefixContent.trim() || item.suffixContent.trim() || item.negativeContent.trim()))}>
                 <span class="context-label">{props.t("projectContext")}</span>
               </Show>
               <textarea

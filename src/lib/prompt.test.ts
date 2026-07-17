@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { CommonDescription, GenerationDraft, ModelCapabilities } from "../types";
-import { composePrompt, isValidCustomSize, normalizeDraftForModel, validateGenerationDraft } from "./prompt";
+import { composeNegativePrompt, composePrompt, isValidCustomSize, normalizeDraftForModel, validateGenerationDraft } from "./prompt";
 
 const descriptions: CommonDescription[] = [
-  { id: "1", title: "Era", content: "Post-millennial visual language", enabled: true, placement: "prefix", createdAt: "2026-01-01" },
-  { id: "2", title: "Style", content: "Anime-inspired line work", enabled: true, placement: "suffix", createdAt: "2026-01-01" },
-  { id: "3", title: "Off", content: "Do not include", enabled: false, placement: "suffix", createdAt: "2026-01-01" },
+  { id: "1", title: "Era", prefixContent: "Post-millennial visual language", suffixContent: "Editorial restraint", negativeContent: "visual clutter", enabled: true, createdAt: "2026-01-01" },
+  { id: "2", title: "Style", prefixContent: "Fine line detail", suffixContent: "Anime-inspired line work", negativeContent: "flat lighting", enabled: true, createdAt: "2026-01-01" },
+  { id: "3", title: "Off", prefixContent: "", suffixContent: "Do not include", negativeContent: "hidden", enabled: false, createdAt: "2026-01-01" },
 ];
 
 const capabilities: ModelCapabilities = {
@@ -98,7 +98,13 @@ const draft: GenerationDraft = {
 describe("composePrompt", () => {
   it("merges enabled prefix and suffix descriptions in order", () => {
     expect(composePrompt("A portrait", descriptions, true)).toBe(
-      "Post-millennial visual language\n\nA portrait\n\nAnime-inspired line work",
+      "Post-millennial visual language\n\nFine line detail\n\nA portrait\n\nEditorial restraint\n\nAnime-inspired line work",
+    );
+  });
+
+  it("merges project negative parts in list order before the manual negative prompt", () => {
+    expect(composeNegativePrompt("low resolution", descriptions, true)).toBe(
+      "visual clutter\nflat lighting\nlow resolution",
     );
   });
 

@@ -4,7 +4,7 @@ use base64::Engine;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_opener::OpenerExt;
 
 use crate::app_state::AppState;
@@ -20,7 +20,7 @@ use crate::domain::{
 };
 use crate::providers::{ProviderAdapter, create_adapter};
 use crate::runtime::{execute_generation, poll_remote_tasks};
-use crate::storage::{ProviderRemapResult, RemoteFileRecord};
+use crate::storage::{ProviderRemapResult, RemoteFileRecord, strip_extended_length_prefix};
 
 const WORKSPACE_SETTING_KEY: &str = "workspace.v1";
 
@@ -46,6 +46,31 @@ pub struct HistoryMutationResultDto {
     pub failures: Vec<LifecycleFailureDto>,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct DiagnosticProjectDto {
+    pub id: String,
+    pub name: String,
+    pub storage_path: String,
+    pub database_exists: bool,
+    pub is_open: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct DiagnosticReportDto {
+    pub app_version: String,
+    pub os: String,
+    pub architecture: String,
+    pub app_data_directory: String,
+    pub log_directory: String,
+    pub log_files: Vec<String>,
+    pub log_tail: String,
+    pub credential_store_status: String,
+    pub credential_store_message: String,
+    pub projects: Vec<DiagnosticProjectDto>,
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn workspace_load(
@@ -60,10 +85,12 @@ pub async fn workspace_load(
             let database = std::path::Path::new(&project.storage_path)
                 .join(".imageworkbench")
                 .join("project.sqlite3");
-            if database.is_file()
-                && let Err(error) = state.open_project(&project.storage_path).await
-            {
-                tracing::warn!(project_id = %project.id, %error, "failed to reopen project");
+            if database.is_file() {
+                if let Err(error) = state.open_project(&project.storage_path).await {
+                    tracing::warn!(project_id = %project.id, path = %project.storage_path, %error, "failed to reopen project");
+                }
+            } else {
+                tracing::warn!(project_id = %project.id, path = %project.storage_path, "project database is missing during workspace restore");
             }
         }
     }
@@ -77,6 +104,121 @@ pub async fn workspace_save(
     snapshot: WorkspaceSnapshot,
 ) -> CommandResult<()> {
     save_workspace_snapshot(&state, snapshot).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn diagnostics_report(
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> CommandResult<DiagnosticReportDto> {
+    let app_data_directory = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| CommandError::new("app_data", error.to_string()))?;
+    let log_directory = app_data_directory.join("logs");
+    let (credential_store_status, credential_store_message) = match state
+        .credential_store_health()
+        .await
+    {
+        Ok(()) => (
+            "ok".to_owned(),
+            "Credential round-trip succeeded".to_owned(),
+        ),
+        Err(error) => {
+            tracing::error!(code = %error.code, message = %error.message, "credential store diagnostic failed");
+            ("error".to_owned(), error.to_string())
+        }
+    };
+    let (log_files, log_tail) = read_diagnostic_logs(&log_directory);
+
+    let open_projects = state
+        .open_project_summaries()
+        .await?
+        .into_iter()
+        .map(|summary| summary.id)
+        .collect::<HashSet<_>>();
+    let workspace = state
+        .global_store()
+        .setting::<WorkspaceSnapshot>(WORKSPACE_SETTING_KEY)
+        .await?;
+    let projects = workspace
+        .map(|snapshot| snapshot.projects)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|project| {
+            let database_exists = std::path::Path::new(&project.storage_path)
+                .join(".imageworkbench")
+                .join("project.sqlite3")
+                .is_file();
+            DiagnosticProjectDto {
+                is_open: open_projects.contains(&project.id),
+                database_exists,
+                id: project.id,
+                name: project.name,
+                storage_path: project.storage_path,
+            }
+        })
+        .collect();
+
+    Ok(DiagnosticReportDto {
+        app_version: env!("CARGO_PKG_VERSION").to_owned(),
+        os: std::env::consts::OS.to_owned(),
+        architecture: std::env::consts::ARCH.to_owned(),
+        app_data_directory: app_data_directory.to_string_lossy().into_owned(),
+        log_directory: log_directory.to_string_lossy().into_owned(),
+        log_files,
+        log_tail,
+        credential_store_status,
+        credential_store_message,
+        projects,
+    })
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn diagnostics_open_logs(app: AppHandle) -> CommandResult<()> {
+    let log_directory = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| CommandError::new("app_data", error.to_string()))?
+        .join("logs");
+    std::fs::create_dir_all(&log_directory)?;
+    app.opener()
+        .open_path(log_directory.to_string_lossy(), None::<String>)
+        .map_err(|error| CommandError::new("opener", error.to_string()))
+}
+
+fn read_diagnostic_logs(log_directory: &std::path::Path) -> (Vec<String>, String) {
+    let mut files = std::fs::read_dir(log_directory)
+        .ok()
+        .into_iter()
+        .flatten()
+        .filter_map(Result::ok)
+        .filter(|entry| {
+            entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with("imageworkbench.log")
+        })
+        .collect::<Vec<_>>();
+    files.sort_by_key(|entry| {
+        entry
+            .metadata()
+            .and_then(|metadata| metadata.modified())
+            .ok()
+    });
+    let names = files
+        .iter()
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .collect::<Vec<_>>();
+    let Some(latest) = files.last() else {
+        return (names, String::new());
+    };
+    let bytes = std::fs::read(latest.path()).unwrap_or_default();
+    let start = bytes.len().saturating_sub(128 * 1024);
+    let tail = String::from_utf8_lossy(&bytes[start..]).into_owned();
+    (names, tail)
 }
 
 async fn save_workspace_snapshot(
@@ -382,7 +524,10 @@ pub async fn project_create(
     name: String,
     path: String,
 ) -> CommandResult<ProjectSummary> {
-    let store = state.create_project(&project_id, &name, path).await?;
+    let store = state.create_project(&project_id, &name, &path).await.map_err(|error| {
+        tracing::error!(code = %error.code, message = %error.message, %project_id, %path, "project creation failed");
+        error
+    })?;
     Ok(store.summary().await?)
 }
 
@@ -392,7 +537,10 @@ pub async fn project_open(
     state: tauri::State<'_, AppState>,
     path: String,
 ) -> CommandResult<ProjectSummary> {
-    let store = state.open_project(path).await?;
+    let store = state.open_project(&path).await.map_err(|error| {
+        tracing::error!(code = %error.code, message = %error.message, %path, "project open failed");
+        error
+    })?;
     Ok(store.summary().await?)
 }
 
@@ -1316,6 +1464,9 @@ async fn sync_workspace_projects(
                         DescriptionPlacement::Prefix => ContextPlacement::Prepend,
                         DescriptionPlacement::Suffix => ContextPlacement::Append,
                     },
+                    prefix_content: description.prefix_content.clone(),
+                    suffix_content: description.suffix_content.clone(),
+                    negative_content: description.negative_content.clone(),
                     sort_order: i32::try_from(index).unwrap_or(i32::MAX),
                     enabled: description.enabled,
                     created_at,
@@ -1394,6 +1545,8 @@ pub fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
         .commands(tauri_specta::collect_commands![
             workspace_load,
             workspace_save,
+            diagnostics_report,
+            diagnostics_open_logs,
             queue_pause,
             queue_resume,
             queue_status,
@@ -1478,12 +1631,18 @@ async fn history_thumbnail(
     };
     let project_root = project_root.to_owned();
     tokio::task::spawn_blocking(move || {
+        let Ok(project_root) = project_root
+            .canonicalize()
+            .map(strip_extended_length_prefix)
+        else {
+            return Ok(None);
+        };
         let candidate = if local_path.is_absolute() {
             local_path
         } else {
-            project_root.join(local_path)
+            project_root.join(&local_path)
         };
-        let Ok(path) = candidate.canonicalize() else {
+        let Ok(path) = candidate.canonicalize().map(strip_extended_length_prefix) else {
             return Ok(None);
         };
         if !path.starts_with(&project_root) || !path.is_file() {
@@ -1560,6 +1719,8 @@ mod tests {
                 naming_pattern: "{run-id}".to_owned(),
                 default_provider_id: String::new(),
                 default_model: String::new(),
+                flat_output: false,
+                default_stream: None,
             },
         }
     }
@@ -1575,6 +1736,7 @@ mod tests {
             api_mode: ApiMode::Native,
             enabled: true,
             models: vec!["gpt-image-1".to_owned()],
+            discovered_models: vec![],
             api_version: None,
             organization: None,
             project_id: None,
@@ -1591,6 +1753,7 @@ mod tests {
             models_path: None,
             compatibility_json: None,
             capability_overrides_json: None,
+            default_stream: None,
         }
     }
 
@@ -1613,6 +1776,9 @@ mod tests {
                 name: "Context".to_owned(),
                 content: "anime".to_owned(),
                 placement: ContextPlacement::Prepend,
+                prefix_content: "anime".to_owned(),
+                suffix_content: String::new(),
+                negative_content: String::new(),
                 sort_order: 0,
                 enabled: true,
                 created_at: now,
@@ -1679,6 +1845,9 @@ mod tests {
             content: "data:image/png;base64,AAAA".to_owned(),
             enabled: true,
             placement: DescriptionPlacement::Prefix,
+            prefix_content: "data:image/png;base64,AAAA".to_owned(),
+            suffix_content: String::new(),
+            negative_content: String::new(),
             created_at: now.to_rfc3339(),
         });
         project.presets.push(FrontendGenerationPreset {
@@ -1885,5 +2054,17 @@ mod tests {
                 .as_deref()
                 .is_some_and(|url| url.starts_with("data:image/png;base64,"))
         );
+    }
+
+    #[test]
+    fn reads_latest_diagnostic_log_tail() {
+        let directory = tempfile::tempdir().unwrap();
+        let log_path = directory.path().join("imageworkbench.log.2026-07-17");
+        std::fs::write(&log_path, "first line\nproject open failed\n").unwrap();
+
+        let (files, tail) = read_diagnostic_logs(directory.path());
+
+        assert_eq!(files, vec!["imageworkbench.log.2026-07-17"]);
+        assert!(tail.contains("project open failed"));
     }
 }

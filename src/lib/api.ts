@@ -7,6 +7,7 @@ import type {
   GenerationResult,
   GeneratedAsset,
   HistoryRecord,
+  Project,
   ProjectSummary,
   ProviderProfile,
   ReferenceAsset,
@@ -98,10 +99,40 @@ interface RawPromptContext {
   name: string;
   content: string;
   placement: "prepend" | "append";
+  prefixContent?: string;
+  suffixContent?: string;
+  negativeContent?: string;
   sortOrder: number;
   enabled: boolean;
   createdAt: string;
   updatedAt: string;
+}
+
+interface LegacyCommonDescription extends Partial<CommonDescription> {
+  id: string;
+  title: string;
+  content?: string;
+  placement?: "prefix" | "suffix";
+  enabled: boolean;
+  createdAt: string;
+}
+
+export function normalizeCommonDescription(description: LegacyCommonDescription): CommonDescription {
+  const hasStructuredParts = Boolean(
+    description.prefixContent?.trim()
+    || description.suffixContent?.trim()
+    || description.negativeContent?.trim(),
+  );
+  const legacyContent = hasStructuredParts ? "" : description.content?.trim() ?? "";
+  return {
+    id: description.id,
+    title: description.title,
+    prefixContent: hasStructuredParts ? description.prefixContent ?? "" : description.placement === "prefix" ? legacyContent : "",
+    suffixContent: hasStructuredParts ? description.suffixContent ?? "" : description.placement !== "prefix" ? legacyContent : "",
+    negativeContent: hasStructuredParts ? description.negativeContent ?? "" : "",
+    enabled: description.enabled,
+    createdAt: description.createdAt,
+  };
 }
 
 interface RawGenerationPreset {
@@ -208,6 +239,33 @@ interface HistoryMutationResult {
   remoteFilesDeleted: number;
   remoteFilesRetained: number;
   failures: Array<{ code: string; message: string }>;
+}
+
+export interface NormalizedError {
+  code: string;
+  message: string;
+  details?: unknown;
+}
+
+export interface DiagnosticProject {
+  id: string;
+  name: string;
+  storagePath: string;
+  databaseExists: boolean;
+  isOpen: boolean;
+}
+
+export interface DiagnosticReport {
+  appVersion: string;
+  os: string;
+  architecture: string;
+  appDataDirectory: string;
+  logDirectory: string;
+  logFiles: string[];
+  logTail: string;
+  credentialStoreStatus: string;
+  credentialStoreMessage: string;
+  projects: DiagnosticProject[];
 }
 
 function mapRawPreset(preset: RawGenerationPreset): GenerationPreset {
@@ -395,12 +453,15 @@ function mapHistoryDetails(record: RawHistoryDetails): HistoryRecord {
     usage: record.usage.length > 0 ? usage : undefined,
     favorite: false,
     draftSnapshot,
-    contextSnapshot: (run.contextSnapshot ?? []).map((context) => ({
+    contextSnapshot: (run.contextSnapshot ?? []).map((context) => normalizeCommonDescription({
       id: context.id,
       title: context.name,
       content: context.content,
       enabled: context.enabled,
       placement: context.placement === "append" ? "suffix" : "prefix",
+      prefixContent: context.prefixContent,
+      suffixContent: context.suffixContent,
+      negativeContent: context.negativeContent,
       createdAt: context.createdAt,
     })),
     presetSnapshot: run.presetSnapshot ? mapRawPreset(run.presetSnapshot) : undefined,
@@ -412,15 +473,43 @@ function isTauriRuntime(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
-export function formatError(error: unknown): string {
-  if (error instanceof Error) return error.message;
+export function normalizeError(error: unknown): NormalizedError {
+  if (typeof error === "string") {
+    try {
+      const parsed = JSON.parse(error) as unknown;
+      if (parsed && typeof parsed === "object") return normalizeError(parsed);
+    } catch {
+      // Plain string errors are already the most useful representation.
+    }
+    return { code: "error", message: error || "Unknown error" };
+  }
+  if (error instanceof Error) {
+    const nested = normalizeError(error.message);
+    return nested.code === "error"
+      ? { ...nested, details: error.cause }
+      : nested;
+  }
   if (error && typeof error === "object") {
     const obj = error as Record<string, unknown>;
-    if (typeof obj.message === "string" && obj.message) return obj.message;
-    if (typeof obj.code === "string") return `Error [${obj.code}]`;
-    try { return JSON.stringify(error); } catch { /* ignore */ }
+    if (obj.error !== undefined && obj.message === undefined && obj.code === undefined) {
+      return normalizeError(obj.error);
+    }
+    const code = typeof obj.code === "string" && obj.code ? obj.code : "error";
+    const message = typeof obj.message === "string" && obj.message
+      ? obj.message
+      : typeof obj.error === "string" && obj.error
+        ? obj.error
+        : `Error [${code}]`;
+    return { code, message, details: obj.details };
   }
-  return String(error);
+  return { code: "error", message: String(error ?? "Unknown error") };
+}
+
+export function formatError(error: unknown): string {
+  const normalized = normalizeError(error);
+  return normalized.code === "error"
+    ? normalized.message
+    : `[${normalized.code}] ${normalized.message}`;
 }
 
 async function invokeWithFallback<T>(
@@ -497,8 +586,11 @@ function contextSnapshotsForCommand(contexts: CommonDescription[]): Array<Record
   return contexts.map((context, index) => ({
     id: context.id,
     name: context.title,
-    content: context.content,
-    placement: context.placement === "suffix" ? "append" : "prepend",
+    content: context.prefixContent || context.suffixContent,
+    placement: context.prefixContent ? "prepend" : "append",
+    prefixContent: context.prefixContent,
+    suffixContent: context.suffixContent,
+    negativeContent: context.negativeContent,
     sortOrder: index,
     enabled: context.enabled,
     createdAt: context.createdAt,
@@ -644,8 +736,9 @@ function normalizeTauriResult(raw: RawGenerationCommandResult): GenerationResult
 
 async function restoreSecrets(snapshot: WorkspaceSnapshot): Promise<WorkspaceSnapshot> {
   const providers = await Promise.all(snapshot.providers.map(async (provider) => {
+    const normalizedProvider = { ...provider, discoveredModels: provider.discoveredModels ?? [] };
     if (!isTauriRuntime()) return {
-      ...provider,
+      ...normalizedProvider,
       apiKey: "",
       hasStoredSecret: provider.hasStoredSecret || sessionSecrets.has(provider.id),
       customHeaders: provider.customHeaders?.map((header) => ({
@@ -660,14 +753,18 @@ async function restoreSecrets(snapshot: WorkspaceSnapshot): Promise<WorkspaceSna
       const hasStoredValue = await invoke<boolean>("provider_header_secret_exists", { providerId: provider.id, headerId: header.id });
       return { ...header, secret: true, value: "", hasStoredValue };
     }));
-    return { ...provider, apiKey: "", hasStoredSecret, customHeaders };
+    return { ...normalizedProvider, apiKey: "", hasStoredSecret, customHeaders };
   }));
   const history = snapshot.history.map((record) => ({
     ...record,
     assets: record.assets ?? [],
     responseParts: record.responseParts ?? [],
   }));
-  return { ...snapshot, providers, history };
+  const projects = snapshot.projects.map((project) => ({
+    ...project,
+    descriptions: (project.descriptions ?? []).map((description) => normalizeCommonDescription(description as unknown as LegacyCommonDescription)),
+  }));
+  return { ...snapshot, projects, providers, history };
 }
 
 function wait(ms: number): Promise<void> {
@@ -781,6 +878,29 @@ export const api = {
     });
   },
 
+  async diagnostics(): Promise<DiagnosticReport> {
+    if (!isTauriRuntime()) {
+      return {
+        appVersion: "browser-demo",
+        os: navigator.platform || "browser",
+        architecture: "browser",
+        appDataDirectory: "localStorage",
+        logDirectory: "Browser developer tools",
+        logFiles: [],
+        logTail: "",
+        credentialStoreStatus: "demo",
+        credentialStoreMessage: "Session-only browser storage",
+        projects: [],
+      };
+    }
+    return invoke<DiagnosticReport>("diagnostics_report");
+  },
+
+  async openDiagnosticsFolder(): Promise<void> {
+    if (!isTauriRuntime()) return;
+    await invoke("diagnostics_open_logs");
+  },
+
   async storeProviderSecret(providerId: string, apiKey: string): Promise<void> {
     if (!apiKey.trim()) return;
     if (!isTauriRuntime()) {
@@ -880,6 +1000,27 @@ export const api = {
     };
   },
 
+  async createProject(project: Project): Promise<ProjectSummary> {
+    if (!isTauriRuntime()) {
+      return {
+        id: project.id,
+        name: project.name,
+        rootPath: project.storagePath,
+        createdAt: project.createdAt,
+        updatedAt: project.updatedAt,
+        lastOpenedAt: project.updatedAt,
+        defaultProviderProfileId: project.settings.defaultProviderId || undefined,
+        defaultModelId: project.settings.defaultModel || undefined,
+        defaultParameters: {},
+      };
+    }
+    return invoke<ProjectSummary>("project_create", {
+      projectId: project.id,
+      name: project.name,
+      path: project.storagePath,
+    });
+  },
+
   async loadProjectDetails(projectId: string): Promise<{ descriptions: CommonDescription[]; presets: GenerationPreset[]; history: HistoryRecord[] }> {
     if (!isTauriRuntime()) return { descriptions: [], presets: [], history: [] };
     const details = await invoke<RawProjectDetails>("project_load_details", { projectId, recentRunLimit: 50 });
@@ -891,10 +1032,14 @@ export const api = {
         id: context.id,
         title: context.name,
         content: context.content,
-        enabled: context.enabled,
         placement: context.placement === "append" ? "suffix" as const : "prefix" as const,
+        prefixContent: context.prefixContent,
+        suffixContent: context.suffixContent,
+        negativeContent: context.negativeContent,
+        enabled: context.enabled,
         createdAt: context.createdAt,
-      }));
+      }))
+      .map((description) => normalizeCommonDescription(description));
     const presets = rawPresets.map(mapRawPreset);
     const history = details.recentRecords.map(mapHistoryDetails);
     return { descriptions, presets, history };
@@ -908,8 +1053,11 @@ export const api = {
       context: {
         id: description.id,
         name: description.title,
-        content: description.content,
-        placement: description.placement === "suffix" ? "append" : "prepend",
+        content: description.prefixContent || description.suffixContent,
+        placement: description.prefixContent ? "prepend" : "append",
+        prefixContent: description.prefixContent,
+        suffixContent: description.suffixContent,
+        negativeContent: description.negativeContent,
         sortOrder,
         enabled: description.enabled,
         createdAt: description.createdAt,
@@ -1078,6 +1226,7 @@ export const api = {
             ...request,
             provider: sanitizeProviderForCommand(request.provider),
             draft: draftForCommand(request),
+            manualNegativePrompt: request.manualNegativePrompt,
             contextSnapshot: contextSnapshotsForCommand(request.contextSnapshot),
             presetSnapshot: presetSnapshotForCommand(request.presetSnapshot),
           },

@@ -98,10 +98,15 @@ impl AppState {
             return Err(CommandError::validation("API key cannot be empty"));
         }
         let keyring = Arc::clone(&self.keyring);
-        tokio::task::spawn_blocking(move || keyring.set(&key, &secret))
+        let account = key.account.clone();
+        let result = tokio::task::spawn_blocking(move || keyring.set(&key, &secret))
             .await
             .map_err(|error| CommandError::new("keyring_task", error.to_string()))?
-            .map_err(map_keyring_error)
+            .map_err(map_keyring_error);
+        if let Err(error) = &result {
+            tracing::error!(code = %error.code, %account, "failed to store credential");
+        }
+        result
     }
 
     pub async fn secret(&self, key: CredentialKey) -> CommandResult<String> {
@@ -118,6 +123,38 @@ impl AppState {
             .await
             .map_err(|error| CommandError::new("keyring_task", error.to_string()))?
             .map_err(map_keyring_error)
+    }
+
+    pub async fn credential_store_health(&self) -> CommandResult<()> {
+        let keyring = Arc::clone(&self.keyring);
+        tokio::task::spawn_blocking(move || {
+            let token = uuid::Uuid::new_v4().to_string();
+            let key = CredentialKey {
+                service: "dev.imageworkbench.desktop".to_owned(),
+                account: format!("diagnostic:{token}"),
+            };
+            let operation = (|| {
+                keyring.set(&key, &token)?;
+                let stored = keyring.get(&key)?;
+                if stored != token {
+                    return Err(KeyringError::Unavailable(
+                        "credential round-trip returned a different value".to_owned(),
+                    ));
+                }
+                Ok(())
+            })();
+            let cleanup = keyring.delete(&key);
+            match operation {
+                Err(error) => {
+                    let _ = cleanup;
+                    Err(error)
+                }
+                Ok(()) => cleanup,
+            }
+        })
+        .await
+        .map_err(|error| CommandError::new("keyring_task", error.to_string()))?
+        .map_err(map_keyring_error)
     }
 
     pub async fn open_project(&self, root: impl AsRef<Path>) -> CommandResult<Arc<ProjectStore>> {
@@ -164,12 +201,13 @@ impl AppState {
         validate_identifier(project_id, "project ID")?;
         let requested_root = root.as_ref();
         if let Some(store) = self.projects.read().await.get(project_id).cloned() {
-            let expected = strip_extended_length_prefix(requested_root.canonicalize().map_err(|error| {
-                CommandError::new(
-                    "project_path",
-                    format!("cannot resolve {}: {error}", requested_root.display()),
-                )
-            })?);
+            let expected =
+                strip_extended_length_prefix(requested_root.canonicalize().map_err(|error| {
+                    CommandError::new(
+                        "project_path",
+                        format!("cannot resolve {}: {error}", requested_root.display()),
+                    )
+                })?);
             if store.layout().root() != expected {
                 return Err(CommandError::validation(
                     "the requested storage path does not match the open project",
@@ -286,14 +324,13 @@ impl AppState {
         &self,
         path: impl AsRef<Path>,
     ) -> CommandResult<PathBuf> {
-        let canonical = strip_extended_length_prefix(
-            path.as_ref().canonicalize().map_err(|error| {
+        let canonical =
+            strip_extended_length_prefix(path.as_ref().canonicalize().map_err(|error| {
                 CommandError::new(
                     "invalid_path",
                     format!("cannot resolve {}: {error}", path.as_ref().display()),
                 )
-            })?,
-        );
+            })?);
         let roots = self
             .projects
             .read()
@@ -370,6 +407,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(state.secret(key).await.unwrap(), "secret");
+        state.credential_store_health().await.unwrap();
         assert_eq!(
             state.provider_limit("provider").await.available_permits(),
             2

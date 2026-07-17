@@ -94,6 +94,9 @@ export type CommonDescriptionDto = {
 	content: string,
 	enabled: boolean,
 	placement: DescriptionPlacement,
+	prefixContent?: string,
+	suffixContent?: string,
+	negativeContent?: string,
 	createdAt: string,
 };
 
@@ -141,6 +144,7 @@ export type GenerateImagesRequest_Deserialize = {
 	storagePath: string,
 	provider: ProviderProfileDto_Deserialize,
 	draft: GenerationDraftDto,
+	manualNegativePrompt?: string | null,
 	composedPrompt: string,
 	contextIds?: string[],
 	presetId: string | null,
@@ -154,6 +158,7 @@ export type GenerateImagesRequest_Serialize = {
 	storagePath: string,
 	provider: ProviderProfileDto_Serialize,
 	draft: GenerationDraftDto,
+	manualNegativePrompt: string | null,
 	composedPrompt: string,
 	contextIds: string[],
 	presetId: string | null,
@@ -504,6 +509,9 @@ export type PromptContext = {
 	name: string,
 	content: string,
 	placement: ContextPlacement,
+	prefixContent?: string,
+	suffixContent?: string,
+	negativeContent?: string,
 	sortOrder: number,
 	enabled: boolean,
 	createdAt: string,
@@ -542,6 +550,7 @@ export type ProviderProfileDto_Deserialize = {
 	apiMode: ApiMode,
 	enabled: boolean,
 	models?: string[],
+	discoveredModels?: string[],
 	apiVersion: string | null,
 	organization: string | null,
 	projectId: string | null,
@@ -575,6 +584,7 @@ export type ProviderProfileDto_Serialize = {
 	apiMode: ApiMode,
 	enabled: boolean,
 	models: string[],
+	discoveredModels: string[],
 	apiVersion: string | null,
 	organization: string | null,
 	projectId: string | null,
@@ -713,4 +723,3 @@ async function typedError<T, E>(result: Promise<T>): Promise<{ status: "ok"; dat
         return { status: "error", error: e as any };
     }
 }
-

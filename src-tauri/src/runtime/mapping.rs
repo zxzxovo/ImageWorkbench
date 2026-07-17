@@ -182,6 +182,12 @@ pub(crate) async fn prepare_generation_request(
                 .unwrap_or_else(|_| "{}".to_owned()),
             ),
         );
+        if let Some(manual_negative_prompt) = &request.manual_negative_prompt {
+            object.insert(
+                "negativePrompt".to_owned(),
+                Value::String(manual_negative_prompt.clone()),
+            );
+        }
     }
     domain_request.metadata.insert(
         "frontendDraft".to_owned(),
@@ -1180,6 +1186,7 @@ mod tests {
                 api_mode: ApiMode::Native,
                 enabled: true,
                 models: vec![],
+                discovered_models: vec![],
                 api_version: Some("v1beta".to_owned()),
                 organization: None,
                 project_id: None,
@@ -1196,7 +1203,9 @@ mod tests {
                 models_path: None,
                 compatibility_json: None,
                 capability_overrides_json: None,
+                default_stream: None,
             },
+            manual_negative_prompt: None,
             draft: GenerationDraftDto {
                 provider_id: "provider".to_owned(),
                 model: "gemini-3.1-flash-image".to_owned(),
@@ -1243,6 +1252,8 @@ mod tests {
                 xai_public_url_expires_after: None,
                 resume_interaction_id: None,
                 last_event_id: None,
+                output_filename: String::new(),
+                flat_output: false,
             },
             composed_prompt: "city".to_owned(),
             context_ids: vec![],
@@ -1360,6 +1371,8 @@ mod tests {
         let mut request = request();
         request.context_ids = vec!["context-a".to_owned()];
         request.preset_id = Some("preset-a".to_owned());
+        request.draft.negative_prompt = "project negative\nmanual negative".to_owned();
+        request.manual_negative_prompt = Some("manual negative".to_owned());
         request.draft.custom_json = serde_json::json!({
             "api_key": "must-not-persist",
             "payload": format!("data:image/png;base64,{}", "a".repeat(500))
@@ -1395,6 +1408,13 @@ mod tests {
         );
         let frontend_draft = &prepared.domain_request.metadata["frontendDraft"];
         assert_eq!(frontend_draft["prompt"], "city");
+        assert_eq!(frontend_draft["negativePrompt"], "manual negative");
+        assert!(
+            prepared
+                .provider_request
+                .prompt
+                .contains("project negative")
+        );
         assert!(frontend_draft.get("references").is_none());
         assert!(frontend_draft.get("maskDataUrl").is_none());
         assert_eq!(

@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
 import { describe, expect, it, vi } from "vitest";
 import type { ProviderProfile } from "../types";
+import { api } from "../lib/api";
 import ProviderModal from "./ProviderModal";
 
 const provider: ProviderProfile = {
@@ -13,6 +14,7 @@ const provider: ProviderProfile = {
   apiMode: "openai-compatible",
   enabled: true,
   models: ["private-image-model"],
+  discoveredModels: [],
   customHeaders: [],
   capabilityOverridesJson: "{}",
 };
@@ -46,5 +48,31 @@ describe("ProviderModal", () => {
     });
     await fireEvent.click(screen.getByRole("button", { name: "save" }));
     await waitFor(() => expect(onUpsert).toHaveBeenCalledTimes(1));
+  });
+
+  it("keeps discovered models disabled until the user enables them", async () => {
+    const onUpsert = vi.fn();
+    const sync = vi.spyOn(api, "syncModels").mockResolvedValue(["private-image-model", "new-image-model"]);
+    render(() => (
+      <ProviderModal
+        open
+        providers={[provider]}
+        t={(key) => key}
+        onClose={vi.fn()}
+        onUpsert={onUpsert}
+        onDelete={vi.fn(async () => true)}
+      />
+    ));
+
+    await fireEvent.click(screen.getByRole("button", { name: "syncModels" }));
+    const newModel = await screen.findByRole("checkbox", { name: /new-image-model/ });
+    expect((newModel as HTMLInputElement).checked).toBe(false);
+
+    await fireEvent.click(newModel);
+    await fireEvent.click(screen.getByRole("button", { name: "save" }));
+    await waitFor(() => expect(onUpsert).toHaveBeenCalled());
+    expect(onUpsert.mock.calls[0][0].models).toContain("new-image-model");
+    expect(onUpsert.mock.calls[0][0].discoveredModels).toEqual(["private-image-model", "new-image-model"]);
+    sync.mockRestore();
   });
 });
