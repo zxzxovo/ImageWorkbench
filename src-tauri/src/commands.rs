@@ -688,7 +688,8 @@ fn validated_project_asset_path(
     } else {
         project.layout().root().join(path)
     }
-    .canonicalize()?;
+    .canonicalize()
+    .map(strip_extended_length_prefix)?;
     if !path.starts_with(project.layout().root()) || !path.is_file() {
         return Err(CommandError::validation(
             "asset path must be a file inside the project",
@@ -1755,6 +1756,35 @@ mod tests {
             capability_overrides_json: None,
             default_stream: None,
         }
+    }
+
+    #[tokio::test]
+    async fn imported_reference_is_resolved_inside_project_and_external_source_is_rejected() {
+        let directory = tempfile::tempdir().unwrap();
+        let project_root = directory.path().join("project");
+        let external_source = directory.path().join("reference.png");
+        std::fs::write(&external_source, b"reference-image-bytes").unwrap();
+        let project = crate::storage::ProjectStore::create(&project_root, "Project")
+            .await
+            .unwrap();
+
+        let imported =
+            crate::storage::import_input_file(project.layout(), &external_source).unwrap();
+        let relative = imported
+            .path
+            .strip_prefix(project.layout().root())
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+
+        assert_eq!(
+            validated_project_asset_path(&project, &relative).unwrap(),
+            imported.path
+        );
+        assert!(
+            validated_project_asset_path(&project, external_source.to_string_lossy().as_ref())
+                .is_err()
+        );
     }
 
     #[tokio::test]

@@ -940,6 +940,30 @@ textarea::placeholder {
   border-color: #74a598;
 }
 
+.reference-mode-hint {
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 9px;
+  padding: 6px 8px;
+  color: #66562e;
+  font-size: 10px;
+  line-height: 1.45;
+  background: #fffaf0;
+  border: 1px solid #ead9aa;
+  border-radius: 5px;
+}
+
+.reference-mode-hint > span { flex: 1; }
+.reference-mode-hint .button { flex: 0 0 auto; }
+
+.reference-mode-hint.is-error {
+  color: #8a3935;
+  background: #fff7f6;
+  border-color: #e8c4c0;
+}
+
 .advanced-section {
   border-top: 0;
 }

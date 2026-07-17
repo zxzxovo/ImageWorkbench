@@ -118,6 +118,47 @@ describe("draft helpers", () => {
     expect(validateGenerationDraft(draft, capabilities)).toContain("reference");
   });
 
+  it("rejects reference media and stale masks in generate mode", () => {
+    const referenceDraft: GenerationDraft = {
+      ...draft,
+      mode: "generate",
+      previousResponseId: "",
+      previousInteractionId: "",
+      references: [{
+        id: "source",
+        name: "source.png",
+        url: "assets/inputs/source.png",
+        mimeType: "image/png",
+        sourceType: "local",
+        role: "source",
+      }],
+    };
+    expect(validateGenerationDraft(referenceDraft, { ...capabilities, maxReferences: 1 }))
+      .toContain("generation-input");
+    expect(validateGenerationDraft(
+      { ...referenceDraft, references: [], maskDataUrl: "data:image/png;base64,AA==" },
+      capabilities,
+    )).toContain("generation-input");
+  });
+
+  it("allows reference media when continuing an existing conversation", () => {
+    const continuationDraft: GenerationDraft = {
+      ...draft,
+      mode: "generate",
+      previousResponseId: "response-1",
+      references: [{
+        id: "source",
+        name: "source.png",
+        url: "assets/inputs/source.png",
+        mimeType: "image/png",
+        sourceType: "local",
+        role: "source",
+      }],
+    };
+    expect(validateGenerationDraft(continuationDraft, { ...capabilities, maxReferences: 1 }))
+      .not.toContain("generation-input");
+  });
+
   it("removes unsupported options when switching models", () => {
     const normalized = normalizeDraftForModel(draft, capabilities);
     expect(normalized.mode).toBe("generate");

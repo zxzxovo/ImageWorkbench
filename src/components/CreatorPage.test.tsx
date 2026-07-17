@@ -52,4 +52,53 @@ describe("CreatorPage", () => {
     chooseReferences.mockRestore();
     api.isDemo = wasDemo;
   });
+
+  it("shows and enforces the generate-mode reference warning", async () => {
+    const onGenerate = vi.fn(async () => undefined);
+
+    function Harness() {
+      const [draft, setDraft] = createStore<GenerationDraft>({
+        ...initialDraft,
+        mode: "generate",
+        references: [{
+          id: "reference",
+          name: "reference.png",
+          url: "assets/inputs/reference.png",
+          mimeType: "image/png",
+          sourceType: "local",
+          role: "source",
+        }],
+      });
+      return (
+        <CreatorPage
+          project={demoProjects[0]}
+          providers={demoWorkspace.providers}
+          draft={draft}
+          setDraft={setDraft}
+          tasks={[]}
+          history={[]}
+          queuePaused={false}
+          queueControlBusy={false}
+          t={(key) => key}
+          onPromptOverrideClear={vi.fn()}
+          onGenerate={onGenerate}
+          onCancelTask={vi.fn()}
+          onToggleQueue={vi.fn()}
+          onManageProviders={vi.fn()}
+          onError={vi.fn()}
+          onReveal={vi.fn()}
+          onDownload={vi.fn()}
+        />
+      );
+    }
+
+    render(() => <Harness />);
+    expect(screen.getByRole("alert").textContent).toContain("generationReferenceValidation");
+
+    await fireEvent.click(screen.getAllByRole("button", { name: "generate" })[0]);
+    expect(onGenerate).not.toHaveBeenCalled();
+
+    await fireEvent.click(screen.getByRole("button", { name: "switchToEditMode" }));
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
 });

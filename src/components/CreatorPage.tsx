@@ -1,6 +1,7 @@
 import { For, Show, createMemo, createSignal, onMount, onCleanup } from "solid-js";
 import type { SetStoreFunction } from "solid-js/store";
 import {
+  AlertTriangle,
   ArrowDownToLine,
   Braces,
   ChevronDown,
@@ -86,6 +87,12 @@ export default function CreatorPage(props: CreatorPageProps) {
   const provider = createMemo(() => enabledProviders().find((item) => item.id === props.draft.providerId) ?? enabledProviders()[0]);
   const capabilities = createMemo(() => getModelCapabilities(provider(), props.draft.model));
   const models = createMemo(() => getModelsForProvider(provider()));
+  const continuesConversation = createMemo(() => Boolean(
+    props.draft.previousResponseId.trim() || props.draft.previousInteractionId.trim(),
+  ));
+  const generationInputConflict = createMemo(() => props.draft.mode === "generate"
+    && !continuesConversation()
+    && (props.draft.references.length > 0 || Boolean(props.draft.maskDataUrl?.trim())));
   const composedPrompt = createMemo(() => props.promptOverride ?? composePrompt(
       props.draft.prompt,
       props.project.descriptions,
@@ -112,6 +119,7 @@ export default function CreatorPage(props: CreatorPageProps) {
 
   const setMode = (mode: GenerationMode) => {
     props.setDraft("mode", mode);
+    if (mode !== "mask") props.setDraft("maskDataUrl", "");
     setValidationMessage("");
   };
 
@@ -290,6 +298,10 @@ export default function CreatorPage(props: CreatorPageProps) {
     }
     if (errors.includes("reference")) {
       setValidationMessage(props.t("validationReference"));
+      return;
+    }
+    if (errors.includes("generation-input")) {
+      setValidationMessage(props.t("generationReferenceValidation"));
       return;
     }
     if (errors.includes("variation-input")) {
@@ -494,6 +506,15 @@ export default function CreatorPage(props: CreatorPageProps) {
                 </button>
               </Show>
             </div>
+            <Show when={props.draft.mode === "generate" && !continuesConversation() && capabilities().maxReferences > 0}>
+              <div class={`reference-mode-hint ${generationInputConflict() ? "is-error" : ""}`} role={generationInputConflict() ? "alert" : "note"}>
+                <AlertTriangle size={15} />
+                <span>{props.t(generationInputConflict() ? "generationReferenceValidation" : "generationReferenceHint")}</span>
+                <Show when={capabilities().modes.includes("edit")}>
+                  <button class="button ghost compact" type="button" onClick={() => setMode("edit")}>{props.t("switchToEditMode")}</button>
+                </Show>
+              </div>
+            </Show>
           </div>
 
           <Show when={props.draft.mode === "mask"}>

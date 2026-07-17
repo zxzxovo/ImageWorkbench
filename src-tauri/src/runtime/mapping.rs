@@ -12,7 +12,9 @@ use crate::bridge::{
 use crate::domain;
 use crate::providers::capabilities;
 use crate::providers::types as provider;
-use crate::storage::{ProjectStore, StoredFile, atomic_write_new, sha256_bytes};
+use crate::storage::{
+    ProjectStore, StoredFile, atomic_write_new, sha256_bytes, strip_extended_length_prefix,
+};
 
 const MAX_REMOTE_INPUT_BYTES: u64 = 100 * 1024 * 1024;
 
@@ -41,6 +43,34 @@ pub(crate) async fn prepare_generation_request(
     if prompt.trim().is_empty() {
         return Err(CommandError::validation("prompt is required"));
     }
+    let adapter_kind = request.provider.adapter_kind();
+    let continues_conversation = (adapter_kind == provider::ProviderKind::Gemini
+        && request
+            .draft
+            .previous_interaction_id
+            .as_deref()
+            .is_some_and(|value| !value.trim().is_empty()))
+        || (matches!(
+            adapter_kind,
+            provider::ProviderKind::OpenAi | provider::ProviderKind::OpenAiCompatible
+        ) && request
+            .draft
+            .previous_response_id
+            .as_deref()
+            .is_some_and(|value| !value.trim().is_empty()));
+    if request.draft.mode == GenerationMode::Generate
+        && !continues_conversation
+        && (!request.draft.references.is_empty()
+            || request
+                .draft
+                .mask_data_url
+                .as_deref()
+                .is_some_and(|mask| !mask.trim().is_empty()))
+    {
+        return Err(CommandError::validation(
+            "generation mode cannot contain reference media or a mask; switch to edit mode or remove the inputs",
+        ));
+    }
     let mut provider_inputs = Vec::with_capacity(request.draft.references.len());
     let mut domain_inputs = Vec::with_capacity(request.draft.references.len());
     for reference in &request.draft.references {
@@ -68,21 +98,6 @@ pub(crate) async fn prepare_generation_request(
         _ => (None, None),
     };
 
-    let adapter_kind = request.provider.adapter_kind();
-    let continues_conversation = (adapter_kind == provider::ProviderKind::Gemini
-        && request
-            .draft
-            .previous_interaction_id
-            .as_deref()
-            .is_some_and(|value| !value.trim().is_empty()))
-        || (matches!(
-            adapter_kind,
-            provider::ProviderKind::OpenAi | provider::ProviderKind::OpenAiCompatible
-        ) && request
-            .draft
-            .previous_response_id
-            .as_deref()
-            .is_some_and(|value| !value.trim().is_empty()));
     let operation = if continues_conversation {
         provider::Operation::ConversationContinue
     } else {
@@ -737,7 +752,7 @@ fn local_reference_path(project: &ProjectStore, value: &str) -> CommandResult<Pa
             project.layout().root().join(path)
         }
     };
-    let canonical = path.canonicalize()?;
+    let canonical = path.canonicalize().map(strip_extended_length_prefix)?;
     if !canonical.is_file() {
         return Err(CommandError::validation(
             "reference local path must point to a file",
@@ -1261,6 +1276,113 @@ mod tests {
             context_snapshot: vec![],
             preset_snapshot: None,
         }
+    }
+
+    #[tokio::test]
+    async fn generation_mode_rejects_reference_media_before_provider_execution() {
+        let directory = tempfile::tempdir().unwrap();
+        let project = ProjectStore::create(directory.path().join("project"), "Project")
+            .await
+            .unwrap();
+        let mut request = request();
+        request.draft.references.push(ReferenceAssetDto {
+            id: "reference".to_owned(),
+            name: "reference.png".to_owned(),
+            url: "assets/inputs/reference.png".to_owned(),
+            mime_type: "image/png".to_owned(),
+            role: ReferenceRole::Source,
+            source_type: Some(ReferenceSourceType::Local),
+            file_id: None,
+        });
+
+        let error = prepare_generation_request(&project, &request)
+            .await
+            .unwrap_err();
+
+        assert_eq!(error.code, "validation");
+        assert!(error.message.contains("switch to edit mode"));
+    }
+
+    #[tokio::test]
+    async fn conversation_continuation_can_include_reference_media() {
+        let directory = tempfile::tempdir().unwrap();
+        let project = ProjectStore::create(directory.path().join("project"), "Project")
+            .await
+            .unwrap();
+        let mut image_bytes = Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgba8(image::RgbaImage::new(8, 8))
+            .write_to(&mut image_bytes, image::ImageFormat::Png)
+            .unwrap();
+        let mut request = request();
+        request.draft.previous_interaction_id = Some("interaction-1".to_owned());
+        request.draft.references.push(ReferenceAssetDto {
+            id: "reference".to_owned(),
+            name: "reference.png".to_owned(),
+            url: format!(
+                "data:image/png;base64,{}",
+                base64::engine::general_purpose::STANDARD.encode(image_bytes.into_inner())
+            ),
+            mime_type: "image/png".to_owned(),
+            role: ReferenceRole::Source,
+            source_type: Some(ReferenceSourceType::Base64),
+            file_id: None,
+        });
+
+        let prepared = prepare_generation_request(&project, &request)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            prepared.provider_request.operation,
+            provider::Operation::ConversationContinue
+        );
+        assert_eq!(prepared.provider_request.inputs.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn edit_mode_reads_an_external_image_after_it_is_imported_into_the_project() {
+        let directory = tempfile::tempdir().unwrap();
+        let external_source = directory.path().join("reference.png");
+        image::DynamicImage::ImageRgba8(image::RgbaImage::new(8, 8))
+            .save(&external_source)
+            .unwrap();
+        let project = ProjectStore::create(directory.path().join("project"), "Project")
+            .await
+            .unwrap();
+        let imported =
+            crate::storage::import_input_file(project.layout(), &external_source).unwrap();
+        let relative = imported
+            .path
+            .strip_prefix(project.layout().root())
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        let mut request = request();
+        request.draft.mode = GenerationMode::Edit;
+        request.draft.references.push(ReferenceAssetDto {
+            id: "reference".to_owned(),
+            name: "reference.png".to_owned(),
+            url: relative,
+            mime_type: "image/png".to_owned(),
+            role: ReferenceRole::Source,
+            source_type: Some(ReferenceSourceType::Local),
+            file_id: None,
+        });
+
+        let prepared = prepare_generation_request(&project, &request)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            prepared.provider_request.operation,
+            provider::Operation::Edit
+        );
+        assert_eq!(prepared.provider_request.inputs.len(), 1);
+        assert!(matches!(
+            &prepared.provider_request.inputs[0],
+            provider::InputAsset::LocalFile { path, .. }
+                if path.starts_with(project.layout().root())
+        ));
     }
 
     #[test]

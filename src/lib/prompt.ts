@@ -34,7 +34,7 @@ export function composeNegativePrompt(
   return [...projectNegativeParts, manualNegativePrompt.trim()].filter(Boolean).join("\n");
 }
 
-export type DraftValidationError = "prompt" | "reference" | "reference-limit" | "count" | "variation-input" | "custom-size" | "mask" | "reference-dimensions";
+export type DraftValidationError = "prompt" | "reference" | "reference-limit" | "count" | "variation-input" | "custom-size" | "mask" | "reference-dimensions" | "generation-input";
 
 export function isValidCustomSize(
   width: number,
@@ -60,6 +60,10 @@ export function validateGenerationDraft(
 ): DraftValidationError[] {
   const errors: DraftValidationError[] = [];
   if (draft.mode !== "variation" && !draft.prompt.trim()) errors.push("prompt");
+  const continuesConversation = Boolean(draft.previousResponseId.trim() || draft.previousInteractionId.trim());
+  if (draft.mode === "generate" && !continuesConversation && (draft.references.length > 0 || Boolean(draft.maskDataUrl?.trim()))) {
+    errors.push("generation-input");
+  }
   if (["edit", "mask", "variation", "video"].includes(draft.mode) && draft.references.length === 0) {
     errors.push("reference");
   }
