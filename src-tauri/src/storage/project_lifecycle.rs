@@ -282,8 +282,34 @@ fn remove_owned_directory(root: &Path, path: &Path) -> StorageResult<()> {
     if !canonical.starts_with(root) || canonical == root {
         return Err(StorageError::InvalidPath(canonical));
     }
-    fs::remove_dir_all(canonical)?;
+    remove_dir_all_with_retry(&canonical)?;
     Ok(())
+}
+
+fn remove_dir_all_with_retry(path: &Path) -> StorageResult<()> {
+    let mut last_error = None;
+    for attempt in 0..8 {
+        match fs::remove_dir_all(path) {
+            Ok(()) => return Ok(()),
+            Err(error)
+                if error.kind() == std::io::ErrorKind::PermissionDenied
+                    || error.raw_os_error() == Some(32) =>
+            {
+                last_error = Some(error);
+                // Windows can hold a recently closed SQLite/WAL handle for a
+                // short period (and antivirus scanners may briefly inspect
+                // the directory). Give the OS a bounded grace period before
+                // reporting the deletion failure.
+                if attempt < 7 {
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                }
+            }
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Err(last_error
+        .expect("retry loop must retain the last deletion error")
+        .into())
 }
 
 fn remove_if_empty(path: &Path) -> StorageResult<()> {
