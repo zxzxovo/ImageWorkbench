@@ -25,6 +25,14 @@ pub enum Locale {
     EnUs,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "lowercase")]
+pub enum ThemeMode {
+    #[default]
+    Light,
+    Dark,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "lowercase")]
 pub enum FrontendProviderKind {
@@ -547,6 +555,49 @@ pub struct ProjectDto {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectHealthStatus {
+    Opened,
+    Missing,
+    Locked,
+    Corrupt,
+    IdMismatch,
+    Unavailable,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectRecoveryDto {
+    pub project_id: String,
+    pub storage_path: String,
+    pub status: ProjectHealthStatus,
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectCopyMode {
+    Full,
+    Configuration,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectDeleteResult {
+    pub removed: bool,
+    pub files_deleted: bool,
+    pub file_error: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectMoveResult {
+    pub project: ProjectSummary,
+    pub original_files_deleted: bool,
+    pub cleanup_error: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "lowercase")]
 pub enum ReferenceRole {
     Object,
@@ -841,6 +892,8 @@ pub struct GenerationEventEnvelope {
 #[serde(rename_all = "camelCase")]
 pub struct WorkspaceSnapshot {
     pub locale: Locale,
+    #[serde(default)]
+    pub theme: ThemeMode,
     pub active_project_id: String,
     #[serde(default)]
     pub projects: Vec<ProjectDto>,
@@ -848,6 +901,8 @@ pub struct WorkspaceSnapshot {
     pub providers: Vec<ProviderProfileDto>,
     #[serde(default)]
     pub history: Vec<HistoryRecordDto>,
+    #[serde(default)]
+    pub project_recovery: Vec<ProjectRecoveryDto>,
 }
 
 impl WorkspaceSnapshot {
@@ -874,6 +929,7 @@ impl WorkspaceSnapshot {
     pub fn for_global_storage(&self) -> Self {
         let mut snapshot = self.without_api_keys();
         snapshot.history.clear();
+        snapshot.project_recovery.clear();
         for project in &mut snapshot.projects {
             project.descriptions.clear();
             project.presets.clear();

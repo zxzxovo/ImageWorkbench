@@ -1,5 +1,6 @@
 import { For, Show, createEffect, createSignal } from "solid-js";
 import { createStore } from "solid-js/store";
+import { Popover } from "@kobalte/core/popover";
 import { Bot, Boxes, Check, ChevronDown, Gem, KeyRound, Plus, RefreshCw, Save, Server, Trash2, Zap } from "lucide-solid";
 import type { TranslationKey } from "../lib/i18n";
 import { api, formatError } from "../lib/api";
@@ -12,7 +13,7 @@ interface ProviderModalProps {
   providers: ProviderProfile[];
   t: (key: TranslationKey) => string;
   onClose: () => void;
-  onUpsert: (provider: ProviderProfile) => void;
+  onUpsert: (provider: ProviderProfile) => void | Promise<void>;
   onDelete: (providerId: string) => Promise<boolean>;
   onError?: (error: unknown, context: string) => void;
 }
@@ -86,7 +87,10 @@ export default function ProviderModal(props: ProviderModalProps) {
   const [testState, setTestState] = createSignal<"idle" | "testing" | "success" | "failure">("idle");
   const [syncing, setSyncing] = createSignal(false);
   const [advancedOpen, setAdvancedOpen] = createSignal(false);
+  const [templatePickerOpen, setTemplatePickerOpen] = createSignal(false);
   const [formError, setFormError] = createSignal("");
+  const [saving, setSaving] = createSignal(false);
+  const [baseline, setBaseline] = createSignal("");
   // Track the raw API key the user has typed in this session so test/sync can
   // pass it directly to the backend without relying on a keyring round-trip.
   const [pendingApiKey, setPendingApiKey] = createSignal("");
@@ -96,14 +100,24 @@ export default function ProviderModal(props: ProviderModalProps) {
     ...draft.models,
   ])];
 
-  const loadProvider = (provider: ProviderProfile) => {
+  const snapshot = (provider: ProviderProfile = draft) => JSON.stringify(provider);
+  const isDirty = () => Boolean(baseline()) && snapshot() !== baseline();
+  const canDiscard = () => !isDirty() || window.confirm(props.t("discardUnsavedChanges"));
+  const requestClose = () => {
+    if (canDiscard()) props.onClose();
+  };
+
+  const loadProvider = (provider: ProviderProfile, force = false) => {
+    if (!force && !canDiscard()) return;
+    const normalized = normalizeProvider(provider);
     setIsNew(false);
     setSelectedId(provider.id);
-    setDraft(normalizeProvider(provider));
+    setDraft(normalized);
     setTestState("idle");
     setAdvancedOpen(false);
     setFormError("");
     setPendingApiKey("");
+    setBaseline(snapshot(normalized));
   };
 
   let modalWasOpen = false;
@@ -115,11 +129,12 @@ export default function ProviderModal(props: ProviderModalProps) {
     if (modalWasOpen) return;
     modalWasOpen = true;
     const current = props.providers.find((item) => item.id === selectedId()) ?? props.providers[0];
-    if (current) loadProvider(current);
-    else createInstance("openai");
+    if (current) loadProvider(current, true);
+    else createInstance("openai", true);
   });
 
-  const createInstance = (kind: ProviderKind) => {
+  const createInstance = (kind: ProviderKind, force = false) => {
+    if (!force && !canDiscard()) return;
     const next = emptyProvider(kind);
     setIsNew(true);
     setSelectedId(next.id);
@@ -128,10 +143,23 @@ export default function ProviderModal(props: ProviderModalProps) {
     setAdvancedOpen(false);
     setFormError("");
     setPendingApiKey("");
+    setBaseline(snapshot(next));
   };
 
-  const prepareDraft = async (): Promise<ProviderProfile> => {
+  const selectTemplate = (kind: ProviderKind) => {
+    createInstance(kind);
+    setTemplatePickerOpen(false);
+  };
+
+  const validateDraft = (): ProviderProfile => {
     setFormError("");
+    if (!draft.name.trim()) throw new Error(props.t("providerNameRequired"));
+    try {
+      const url = new URL(draft.baseUrl);
+      if (!['http:', 'https:'].includes(url.protocol)) throw new Error("protocol");
+    } catch {
+      throw new Error(props.t("providerBaseUrlInvalid"));
+    }
     const compatibilityJson = draft.compatibilityJson?.trim() ?? "";
     if (compatibilityJson) {
       try {
@@ -149,9 +177,24 @@ export default function ProviderModal(props: ProviderModalProps) {
       throw new Error(props.t("invalidCapabilityOverrides"));
     }
 
-    const apiKey = draft.apiKey.trim();
+    if (draft.enabled && draft.models.length === 0) throw new Error(props.t("noModelsEnabled"));
+    return {
+      ...draft,
+      name: draft.name.trim(),
+      baseUrl: draft.baseUrl.trim().replace(/\/$/, ""),
+      apiKey: pendingApiKey() || draft.apiKey,
+      customHeaders: (draft.customHeaders ?? []).map((header) => ({
+        ...header,
+        name: header.name.trim(),
+        secret: header.secret || isSensitiveHeaderName(header.name),
+      })),
+    };
+  };
+
+  const persistSecrets = async (pending: ProviderProfile): Promise<ProviderProfile> => {
+    const apiKey = pending.apiKey.trim();
     if (apiKey) await api.storeProviderSecret(draft.id, apiKey);
-    const customHeaders = await Promise.all((draft.customHeaders ?? []).map(async (header) => {
+    const customHeaders = await Promise.all((pending.customHeaders ?? []).map(async (header) => {
       const secret = header.secret || isSensitiveHeaderName(header.name);
       if (secret && header.value) await api.storeProviderHeaderSecret(draft.id, header.id, header.value);
       return {
@@ -162,7 +205,7 @@ export default function ProviderModal(props: ProviderModalProps) {
       };
     }));
     const provider: ProviderProfile = {
-      ...draft,
+      ...pending,
       apiKey: "",
       hasStoredSecret: draft.hasStoredSecret || Boolean(apiKey),
       customHeaders,
@@ -172,17 +215,20 @@ export default function ProviderModal(props: ProviderModalProps) {
   };
 
   const saveProvider = async () => {
+    setSaving(true);
     try {
-      const provider = await prepareDraft();
-      if (provider.enabled && provider.models.length === 0) {
-        throw new Error(props.t("noModelsEnabled"));
-      }
-      props.onUpsert(provider);
+      const provider = await persistSecrets(validateDraft());
+      await props.onUpsert(provider);
+      setDraft(provider);
       setSelectedId(provider.id);
       setIsNew(false);
+      setPendingApiKey("");
+      setBaseline(snapshot(provider));
     } catch (error) {
       setFormError(formatError(error));
       props.onError?.(error, "provider.save");
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -190,11 +236,7 @@ export default function ProviderModal(props: ProviderModalProps) {
     setTestState("testing");
     setFormError("");
     try {
-      const provider = await prepareDraft();
-      // Pass the pending key directly so the backend doesn't need a keyring
-      // round-trip, which can fail on some Windows configurations.
-      const providerForTest = pendingApiKey() ? { ...provider, apiKey: pendingApiKey() } : provider;
-      setTestState((await api.testProvider(providerForTest)) ? "success" : "failure");
+      setTestState((await api.testProvider(validateDraft())) ? "success" : "failure");
     } catch (error) {
       setTestState("failure");
       setFormError(formatError(error));
@@ -206,9 +248,7 @@ export default function ProviderModal(props: ProviderModalProps) {
     setSyncing(true);
     setFormError("");
     try {
-      const provider = await prepareDraft();
-      const providerForSync = pendingApiKey() ? { ...provider, apiKey: pendingApiKey() } : provider;
-      const models = await api.syncModels(providerForSync);
+      const models = await api.syncModels(validateDraft());
       setDraft("discoveredModels", [...new Set(models)]);
       setDraft("lastSyncedAt", new Date().toISOString());
     } catch (error) {
@@ -234,8 +274,8 @@ export default function ProviderModal(props: ProviderModalProps) {
 
   const footer = (
     <>
-      <button class="button secondary" type="button" onClick={props.onClose}>{props.t("close")}</button>
-      <button class="button primary" type="button" onClick={saveProvider}><Save size={16} />{props.t("save")}</button>
+      <button class="button secondary" type="button" disabled={saving()} onClick={requestClose}>{props.t("close")}</button>
+      <button class="button primary" type="button" disabled={saving()} onClick={() => void saveProvider()}><Save size={16} />{saving() ? props.t("saving") : props.t("save")}</button>
     </>
   );
 
@@ -244,7 +284,7 @@ export default function ProviderModal(props: ProviderModalProps) {
       open={props.open}
       title={props.t("providerTitle")}
       subtitle={props.t("providerSubtitle")}
-      onClose={props.onClose}
+      onClose={requestClose}
       size="wide"
       footer={footer}
     >
@@ -252,7 +292,31 @@ export default function ProviderModal(props: ProviderModalProps) {
         <aside class="provider-list-pane">
           <div class="pane-heading">
             <span>{props.t("providers")}</span>
-            <IconButton label={props.t("addProvider")} onClick={() => createInstance("openai")}><Plus size={16} /></IconButton>
+            <Popover open={templatePickerOpen()} onOpenChange={setTemplatePickerOpen} placement="bottom-start" gutter={7}>
+              <Popover.Trigger class="icon-button" aria-label={props.t("addProvider")} title={props.t("addProvider")}><Plus size={16} /></Popover.Trigger>
+              <Popover.Portal>
+                <Popover.Content class="provider-template-picker" aria-label={props.t("chooseProviderTemplate")}>
+                  <Popover.Arrow class="provider-template-arrow" />
+                  <div class="provider-template-picker-heading">
+                    <strong>{props.t("chooseProviderTemplate")}</strong>
+                    <small>{props.t("providerTemplateHint")}</small>
+                  </div>
+                  <div class="template-grid">
+                    <For each={templateData}>
+                      {(template) => {
+                        const TemplateIcon = template.icon;
+                        return (
+                          <button type="button" class="template-button" onClick={() => selectTemplate(template.kind)}>
+                            <span style={{ color: getProviderAccent(template.kind) }}><TemplateIcon size={19} /></span>
+                            <strong>{template.name}</strong>
+                          </button>
+                        );
+                      }}
+                    </For>
+                  </div>
+                </Popover.Content>
+              </Popover.Portal>
+            </Popover>
           </div>
           <div class="provider-instance-list">
             <For each={props.providers}>
@@ -270,29 +334,7 @@ export default function ProviderModal(props: ProviderModalProps) {
             </For>
           </div>
         </aside>
-
         <div class="provider-editor">
-          <section class="provider-templates">
-            <span class="section-kicker">{props.t("template")}</span>
-            <div class="template-grid">
-              <For each={templateData}>
-                {(template) => {
-                  const TemplateIcon = template.icon;
-                  return (
-                    <button
-                      type="button"
-                      class={`template-button ${draft.kind === template.kind ? "is-selected" : ""}`}
-                      onClick={() => createInstance(template.kind)}
-                    >
-                      <span style={{ color: getProviderAccent(template.kind) }}><TemplateIcon size={19} /></span>
-                      <strong>{template.name}</strong>
-                    </button>
-                  );
-                }}
-              </For>
-            </div>
-          </section>
-
           <div class="provider-form-grid">
             <Field label={props.t("providerName")} required>
               <input value={draft.name} onInput={(event) => setDraft("name", event.currentTarget.value)} />
@@ -492,9 +534,10 @@ export default function ProviderModal(props: ProviderModalProps) {
               class="button danger-text compact provider-delete"
               type="button"
               onClick={async () => {
+                if (!window.confirm(props.t("confirmDeleteProvider"))) return;
                 if (!(await props.onDelete(draft.id))) return;
                 const next = props.providers.find((item) => item.id !== draft.id);
-                if (next) loadProvider(next);
+                if (next) loadProvider(next, true);
               }}
             >
               <Trash2 size={15} />{props.t("delete")}

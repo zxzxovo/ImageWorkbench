@@ -112,6 +112,22 @@ export default function DiagnosticsModal(props: DiagnosticsModalProps) {
         <Show when={localError()}><p class="diagnostics-local-error" role="alert">{localError()}</p></Show>
         <Show when={!report() && loading()}><p class="diagnostics-loading"><RefreshCw class="spin" size={16} />{props.t("loadingDiagnostics")}</p></Show>
 
+        <section class="diagnostics-section">
+          <div class="diagnostics-section-heading"><h3>{props.t("recentErrors")}</h3><Show when={props.errors.length > 0}><button class="button ghost compact" type="button" onClick={props.onClearErrors}><Trash2 size={14} />{props.t("clear")}</button></Show></div>
+          <Show when={props.errors.length > 0} fallback={<p class="diagnostics-empty">{props.t("noRecordedErrors")}</p>}>
+            <div class="diagnostic-error-list">
+              <For each={props.errors}>{(error) => (
+                <article class="diagnostic-error-row">
+                  <header><code>{error.code}</code><time dateTime={error.occurredAt}>{new Date(error.occurredAt).toLocaleString()}</time></header>
+                  <strong>{error.message}</strong>
+                  <small>{props.t("errorContext")}: {error.context}</small>
+                  <Show when={stringifyDiagnosticValue(error.details)}>{(details) => <pre>{details()}</pre>}</Show>
+                </article>
+              )}</For>
+            </div>
+          </Show>
+        </section>
+
         <Show when={report()}>{(current) => (
           <>
             <section class="diagnostics-section">
@@ -135,22 +151,6 @@ export default function DiagnosticsModal(props: DiagnosticsModalProps) {
                       <span class={`diagnostic-status ${project.databaseExists ? "status-ok" : "status-error"}`}>{project.databaseExists ? props.t("databaseAvailable") : props.t("databaseMissing")}</span>
                       <span class={`diagnostic-status ${project.isOpen ? "status-ok" : "status-error"}`}>{project.isOpen ? props.t("projectOpen") : props.t("projectClosed")}</span>
                     </div>
-                  )}</For>
-                </div>
-              </Show>
-            </section>
-
-            <section class="diagnostics-section">
-              <div class="diagnostics-section-heading"><h3>{props.t("recentErrors")}</h3><Show when={props.errors.length > 0}><button class="button ghost compact" type="button" onClick={props.onClearErrors}><Trash2 size={14} />{props.t("clear")}</button></Show></div>
-              <Show when={props.errors.length > 0} fallback={<p class="diagnostics-empty">{props.t("noRecordedErrors")}</p>}>
-                <div class="diagnostic-error-list">
-                  <For each={props.errors}>{(error) => (
-                    <article class="diagnostic-error-row">
-                      <header><code>{error.code}</code><time dateTime={error.occurredAt}>{new Date(error.occurredAt).toLocaleString()}</time></header>
-                      <strong>{error.message}</strong>
-                      <small>{props.t("errorContext")}: {error.context}</small>
-                      <Show when={stringifyDiagnosticValue(error.details)}>{(details) => <pre>{details()}</pre>}</Show>
-                    </article>
                   )}</For>
                 </div>
               </Show>

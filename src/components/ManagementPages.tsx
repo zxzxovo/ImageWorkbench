@@ -1,4 +1,4 @@
-import { For, Show, createMemo, createSignal } from "solid-js";
+import { For, Show, createEffect, createMemo, createSignal } from "solid-js";
 import { createStore } from "solid-js/store";
 import {
   ArrowDown,
@@ -10,10 +10,9 @@ import {
   Download,
   Filter,
   FolderOpen,
-  Heart,
   Image as ImageIcon,
   Images,
-  ListFilter,
+  ListChecks,
   List as ListIcon,
   LayoutGrid,
   MoreHorizontal,
@@ -26,9 +25,10 @@ import {
   Sparkles,
   SquarePen,
   Trash2,
+  X,
   GitCompare,
 } from "lucide-solid";
-import { api, formatError } from "../lib/api";
+import { formatError } from "../lib/api";
 import type { TranslationKey } from "../lib/i18n";
 import { getModelLabel, getModelsForProvider } from "../lib/models";
 import type {
@@ -54,7 +54,6 @@ export function HistoryPage(props: BaseProps & {
   history: HistoryRecord[];
   onRerun: (record: HistoryRecord) => void;
   onContinue: (record: HistoryRecord) => void;
-  onToggleFavorite: (recordId: string) => void;
   onDelete: (recordId: string) => void;
   onDeleteFailed: () => void;
 }) {
@@ -67,6 +66,17 @@ export function HistoryPage(props: BaseProps & {
   const [compareMode, setCompareMode] = createSignal(false);
   const [selectedForCompare, setSelectedForCompare] = createSignal<Set<string>>(new Set());
   const [showCompareModal, setShowCompareModal] = createSignal(false);
+  createEffect(() => {
+    props.project.id;
+    setProviderId("all");
+    setStatus("all");
+    setModel("all");
+    setDateFilter("all");
+    setSelectedRecord(null);
+    setCompareMode(false);
+    setSelectedForCompare(new Set<string>());
+    setShowCompareModal(false);
+  });
 
   const records = createMemo(() => {
     const cutoff = dateFilter() === "30d"
@@ -138,7 +148,7 @@ export function HistoryPage(props: BaseProps & {
             {dateFilter() === "30d" ? `${props.t("last30Days")} ✓` : props.t("last30Days")}
           </button>
           <Show when={props.history.some((r) => r.projectId === props.project.id && r.status === "failed")}>
-            <button class="button secondary" type="button" onClick={props.onDeleteFailed}>
+            <button class="button secondary" type="button" onClick={() => window.confirm(props.t("confirmDeleteFailed")) && props.onDeleteFailed()}>
               <Trash2 size={16} />
               {props.t("deleteFailed")}
             </button>
@@ -162,7 +172,6 @@ export function HistoryPage(props: BaseProps & {
           <option value="failed">{props.t("statusFailed")}</option>
           <option value="running">{props.t("statusRunning")}</option>
         </select>
-        <IconButton label={props.t("filters")}><ListFilter size={16} /></IconButton>
       </section>
 
       <Show when={records().length > 0} fallback={<EmptyState icon={<Filter size={24} />} title={props.t("historyEmpty")} />}>
@@ -207,11 +216,10 @@ export function HistoryPage(props: BaseProps & {
                     <td>
                       <Show when={!compareMode()}>
                         <div class="table-actions">
-                          <IconButton label={props.t("favorite")} active={record.favorite} onClick={() => props.onToggleFavorite(record.id)}><Heart size={15} fill={record.favorite ? "currentColor" : "none"} /></IconButton>
                           <IconButton label={props.t("retry")} onClick={() => props.onRerun(record)}><RotateCw size={15} /></IconButton>
                           <Show when={record.interactionId}><IconButton label={props.t("continueEditing")} onClick={() => props.onContinue(record)}><SquarePen size={15} /></IconButton></Show>
                           <IconButton label={props.t("taskDetails")} onClick={() => setSelectedRecord(record)}><MoreHorizontal size={15} /></IconButton>
-                          <IconButton label={props.t("delete")} onClick={() => props.onDelete(record.id)}><Trash2 size={15} /></IconButton>
+                          <IconButton label={props.t("delete")} onClick={() => window.confirm(props.t("confirmDeleteHistoryRecord")) && props.onDelete(record.id)}><Trash2 size={15} /></IconButton>
                         </div>
                       </Show>
                     </td>
@@ -253,6 +261,21 @@ export function DescriptionsPage(props: BaseProps & {
     createdAt: new Date().toISOString(),
   });
 
+  createEffect(() => {
+    props.project.id;
+    const first = props.project.descriptions[0];
+    setSelectedId(first?.id ?? "");
+    setDraft(first ? { ...first } : {
+      id: "",
+      title: "",
+      prefixContent: "",
+      suffixContent: "",
+      negativeContent: "",
+      enabled: true,
+      createdAt: new Date().toISOString(),
+    });
+  });
+
   const select = (item: CommonDescription) => {
     setSelectedId(item.id);
     setDraft({ ...item });
@@ -278,6 +301,7 @@ export function DescriptionsPage(props: BaseProps & {
   };
 
   const remove = (id: string) => {
+    if (!window.confirm(props.t("confirmDeleteDescription"))) return;
     const next = props.project.descriptions.filter((item) => item.id !== id);
     props.onChange(next);
     if (selectedId() === id) {
@@ -374,7 +398,7 @@ export function PresetsPage(props: BaseProps & {
   const openEditor = (preset?: GenerationPreset) => {
     if (preset) setDraft({ ...preset });
     else {
-      const provider = props.providers.find((item) => item.enabled) ?? props.providers[0];
+      const provider = props.providers.find((item) => item.enabled && item.models.length > 0);
       setDraft({
         id: crypto.randomUUID(), name: "", description: "", providerId: provider?.id ?? "", model: provider?.models[0] ?? "", mode: "generate",
         aspectRatio: "1:1", size: "1K", quality: "auto", outputFormat: "png", promptTemplate: "", createdAt: new Date().toISOString(),
@@ -385,6 +409,8 @@ export function PresetsPage(props: BaseProps & {
 
   const save = () => {
     if (!draft.name.trim()) return;
+    const provider = props.providers.find((item) => item.id === draft.providerId && item.enabled && item.models.includes(draft.model));
+    if (!provider) return;
     const exists = props.project.presets.some((item) => item.id === draft.id);
     props.onChange(exists ? props.project.presets.map((item) => item.id === draft.id ? { ...draft } : item) : [...props.project.presets, { ...draft }]);
     setModalOpen(false);
@@ -404,14 +430,14 @@ export function PresetsPage(props: BaseProps & {
           <For each={props.project.presets}>
             {(preset) => (
               <article class="preset-card">
-                <header><span class="preset-icon"><SlidersHorizontal size={17} /></span><IconButton label={props.t("more")}><MoreHorizontal size={16} /></IconButton></header>
+                <header><span class="preset-icon"><SlidersHorizontal size={17} /></span></header>
                 <div><h2>{preset.name}</h2><p>{preset.description}</p></div>
                 <div class="preset-specs"><span>{getModelLabel(preset.model)}</span><span>{preset.aspectRatio}</span><span>{preset.size}</span><span>{preset.outputFormat.toUpperCase()}</span></div>
                 <footer>
                   <button class="button primary compact" type="button" onClick={() => props.onApply(preset)}><Play size={15} />{props.t("applyPreset")}</button>
                   <IconButton label={props.t("edit")} onClick={() => openEditor(preset)}><SlidersHorizontal size={15} /></IconButton>
                   <IconButton label={props.t("duplicate")} onClick={() => duplicate(preset)}><Copy size={15} /></IconButton>
-                  <IconButton label={props.t("delete")} onClick={() => props.onChange(props.project.presets.filter((item) => item.id !== preset.id))}><Trash2 size={15} /></IconButton>
+                  <IconButton label={props.t("delete")} onClick={() => window.confirm(props.t("confirmDeletePreset")) && props.onChange(props.project.presets.filter((item) => item.id !== preset.id))}><Trash2 size={15} /></IconButton>
                 </footer>
               </article>
             )}
@@ -424,7 +450,7 @@ export function PresetsPage(props: BaseProps & {
           <Field label={props.t("name")} required><input value={draft.name} onInput={(event) => setDraft("name", event.currentTarget.value)} /></Field>
           <Field label={props.t("projectDescription")}><input value={draft.description} onInput={(event) => setDraft("description", event.currentTarget.value)} /></Field>
           <div class="control-grid">
-            <Field label={props.t("provider")}><select value={draft.providerId} onChange={(event) => { const providerId = event.currentTarget.value; const provider = props.providers.find((item) => item.id === providerId); setDraft({ providerId, model: provider?.models[0] ?? "" }); }}><For each={props.providers}>{(provider) => <option value={provider.id}>{provider.name}</option>}</For></select></Field>
+            <Field label={props.t("provider")}><select value={draft.providerId} onChange={(event) => { const providerId = event.currentTarget.value; const provider = props.providers.find((item) => item.id === providerId); setDraft({ providerId, model: provider?.models[0] ?? "" }); }}><For each={props.providers.filter((provider) => provider.enabled && provider.models.length > 0)}>{(provider) => <option value={provider.id}>{provider.name}</option>}</For></select></Field>
             <Field label={props.t("model")}><select value={draft.model} onChange={(event) => setDraft("model", event.currentTarget.value)}><For each={getModelsForProvider(selectedProvider())}>{(model) => <option value={model.id}>{model.label}</option>}</For></select></Field>
             <Field label={props.t("mode")}><select value={draft.mode} onChange={(event) => setDraft("mode", event.currentTarget.value as GenerationPreset["mode"])}><option value="generate">{props.t("generateMode")}</option><option value="edit">{props.t("editMode")}</option><option value="mask">{props.t("maskMode")}</option><option value="variation">{props.t("variationMode")}</option></select></Field>
             <Field label={props.t("aspectRatio")}><input value={draft.aspectRatio} onInput={(event) => setDraft("aspectRatio", event.currentTarget.value)} /></Field>
@@ -439,48 +465,58 @@ export function PresetsPage(props: BaseProps & {
 }
 
 export function ProjectSettingsPage(props: BaseProps & {
-  onChange: (project: Project) => void;
+  onChange: (project: Project) => void | Promise<void>;
   onClearHistory: () => void;
 }) {
   const [draft, setDraft] = createStore<Project>({ ...props.project, settings: { ...props.project.settings } });
   const defaultProvider = createMemo(() => props.providers.find((item) => item.id === draft.settings.defaultProviderId));
   const [saved, setSaved] = createSignal(false);
-  const [folderError, setFolderError] = createSignal("");
+  const [saving, setSaving] = createSignal(false);
+  const [saveError, setSaveError] = createSignal("");
 
-  const chooseFolder = async () => {
-    setFolderError("");
-    try {
-      const path = await api.chooseDirectory(draft.storagePath);
-      if (path) setDraft("storagePath", path);
-    } catch (error) {
-      setFolderError(formatError(error));
-      props.onError?.(error, "project_settings.choose_directory");
+  createEffect(() => {
+    props.project.id;
+    setDraft({ ...props.project, settings: { ...props.project.settings } });
+    setSaved(false);
+    setSaveError("");
+  });
+
+  const save = async () => {
+    if (!draft.name.trim() || !draft.settings.defaultProviderId || !draft.settings.defaultModel) {
+      setSaveError(props.t("projectSettingsValidation"));
+      return;
     }
-  };
-
-  const save = () => {
-    props.onChange({ ...draft, updatedAt: new Date().toISOString() });
-    setSaved(true);
-    window.setTimeout(() => setSaved(false), 1400);
+    setSaving(true);
+    setSaveError("");
+    try {
+      await props.onChange({ ...draft, name: draft.name.trim(), updatedAt: new Date().toISOString() });
+      setSaved(true);
+      window.setTimeout(() => setSaved(false), 1400);
+    } catch (error) {
+      setSaveError(formatError(error));
+      props.onError?.(error, "project_settings.save");
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
     <div class="page management-page settings-page">
-      <header class="page-header"><div><h1>{props.t("projectSettings")}</h1><p>{props.project.name}</p></div><button class="button primary" type="button" onClick={save}><Show when={saved()} fallback={<Save size={16} />}><Check size={16} /></Show>{saved() ? props.t("saved") : props.t("save")}</button></header>
-      <Show when={folderError()}><p class="form-error page-form-error" role="alert">{folderError()}</p></Show>
+      <header class="page-header"><div><h1>{props.t("projectSettings")}</h1><p>{props.project.name}</p></div><button class="button primary" type="button" disabled={saving()} onClick={() => void save()}><Show when={saved()} fallback={<Save size={16} />}><Check size={16} /></Show>{saving() ? props.t("saving") : saved() ? props.t("saved") : props.t("save")}</button></header>
+      <Show when={saveError()}><p class="form-error page-form-error" role="alert">{saveError()}</p></Show>
       <div class="settings-layout">
         <section class="settings-section">
           <div class="settings-section-heading"><h2>{props.t("projectInfo")}</h2></div>
           <div class="settings-form">
             <Field label={props.t("projectName")}><input value={draft.name} onInput={(event) => setDraft("name", event.currentTarget.value)} /></Field>
             <Field label={props.t("projectDescription")}><textarea rows="3" value={draft.description} onInput={(event) => setDraft("description", event.currentTarget.value)} /></Field>
-            <Field label={props.t("storagePath")}><div class="input-action-group"><input value={draft.storagePath} onInput={(event) => setDraft("storagePath", event.currentTarget.value)} /><button class="button secondary icon-only" type="button" onClick={chooseFolder}><FolderOpen size={17} /></button></div></Field>
+            <Field label={props.t("storagePath")} hint={props.t("storagePathMoveHint")}><input value={draft.storagePath} readonly aria-readonly="true" /></Field>
           </div>
         </section>
         <section class="settings-section">
           <div class="settings-section-heading"><h2>{props.t("defaultModel")}</h2></div>
           <div class="settings-form control-grid">
-            <Field label={props.t("provider")}><select value={draft.settings.defaultProviderId} onChange={(event) => { const providerId = event.currentTarget.value; const provider = props.providers.find((item) => item.id === providerId); setDraft("settings", { ...draft.settings, defaultProviderId: providerId, defaultModel: provider?.models[0] ?? "" }); }}><For each={props.providers}>{(provider) => <option value={provider.id}>{provider.name}</option>}</For></select></Field>
+            <Field label={props.t("provider")}><select value={draft.settings.defaultProviderId} onChange={(event) => { const providerId = event.currentTarget.value; const provider = props.providers.find((item) => item.id === providerId); setDraft("settings", { ...draft.settings, defaultProviderId: providerId, defaultModel: provider?.models[0] ?? "" }); }}><For each={props.providers.filter((provider) => provider.enabled && provider.models.length > 0)}>{(provider) => <option value={provider.id}>{provider.name}</option>}</For></select></Field>
             <Field label={props.t("model")}><select value={draft.settings.defaultModel} onChange={(event) => setDraft("settings", "defaultModel", event.currentTarget.value)}><For each={getModelsForProvider(defaultProvider())}>{(model) => <option value={model.id}>{model.label}</option>}</For></select></Field>
             <Field label={props.t("namingPattern")} class="span-2">
               <input value={draft.settings.namingPattern} spellcheck={false} onInput={(event) => setDraft("settings", "namingPattern", event.currentTarget.value)} />
@@ -508,15 +544,17 @@ export function ProjectSettingsPage(props: BaseProps & {
             <Toggle checked={draft.settings.saveMetadata} onChange={(value) => setDraft("settings", "saveMetadata", value)} label={props.t("saveMetadata")} />
             <Toggle checked={draft.settings.saveRawResponse} onChange={(value) => setDraft("settings", "saveRawResponse", value)} label={props.t("saveRawResponse")} />
             <Toggle checked={draft.settings.autoOpenFolder} onChange={(value) => setDraft("settings", "autoOpenFolder", value)} label={props.t("autoOpenFolder")} />
-            <div class="toggle-row">
-              <Toggle checked={draft.settings.flatOutput} onChange={(value) => setDraft("settings", "flatOutput", value)} label={props.t("flatOutput")} />
-              <small class="field-hint">{props.t("flatOutputHint")}</small>
-            </div>
+            <Toggle
+              checked={draft.settings.flatOutput}
+              onChange={(value) => setDraft("settings", "flatOutput", value)}
+              label={props.t("flatOutput")}
+              description={props.t("flatOutputHint")}
+            />
           </div>
         </section>
         <section class="settings-section danger-section">
           <div class="settings-section-heading"><h2>{props.t("dangerZone")}</h2></div>
-          <div class="danger-row"><div><strong>{props.t("clearHistory")}</strong><small>{props.project.name}</small></div><button class="button danger" type="button" onClick={props.onClearHistory}><Trash2 size={16} />{props.t("clearHistory")}</button></div>
+          <div class="danger-row"><div><strong>{props.t("clearHistory")}</strong><small>{props.project.name}</small></div><button class="button danger" type="button" onClick={() => window.confirm(props.t("confirmClearHistory")) && props.onClearHistory()}><Trash2 size={16} />{props.t("clearHistory")}</button></div>
         </section>
       </div>
     </div>
@@ -528,6 +566,8 @@ export function ResultsPage(props: BaseProps & {
   onReveal: (path: string) => void;
   onOpenFolder: () => void;
   onDownload: (asset: GeneratedAsset) => void;
+  onDeleteSelected: (assets: Array<{ runId: string; outputId: string }>) => Promise<string[]>;
+  onDownloadSelected: (assets: GeneratedAsset[]) => Promise<number>;
 }) {
   const allAssets = createMemo(() =>
     props.history
@@ -539,6 +579,77 @@ export function ResultsPage(props: BaseProps & {
   const [copiedId, setCopiedId] = createSignal<string | null>(null);
   const [viewMode, setViewMode] = createSignal<"grid" | "list">("grid");
   const [copyError, setCopyError] = createSignal("");
+  const [selectionMode, setSelectionMode] = createSignal(false);
+  const [selectedAssetIds, setSelectedAssetIds] = createSignal<Set<string>>(new Set());
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = createSignal(false);
+  const [batchBusy, setBatchBusy] = createSignal<"delete" | "download" | null>(null);
+  const [batchMessage, setBatchMessage] = createSignal("");
+  const selectedResults = createMemo(() => allAssets().filter(({ asset }) => selectedAssetIds().has(asset.id)));
+
+  createEffect(() => {
+    props.project.id;
+    setSelectionMode(false);
+    setSelectedAssetIds(new Set<string>());
+    setDeleteConfirmOpen(false);
+    setBatchMessage("");
+    setCopyError("");
+  });
+
+  const toggleSelectionMode = () => {
+    setSelectionMode((enabled) => !enabled);
+    setSelectedAssetIds(new Set<string>());
+    setBatchMessage("");
+  };
+
+  const toggleAssetSelection = (assetId: string) => {
+    setSelectedAssetIds((selected) => {
+      const next = new Set(selected);
+      if (next.has(assetId)) next.delete(assetId);
+      else next.add(assetId);
+      return next;
+    });
+  };
+
+  const selectAllAssets = () => setSelectedAssetIds(new Set(allAssets().map(({ asset }) => asset.id)));
+
+  const downloadSelected = async () => {
+    if (selectedResults().length === 0) return;
+    setBatchBusy("download");
+    setBatchMessage("");
+    try {
+      const exported = await props.onDownloadSelected(selectedResults().map(({ asset }) => asset));
+      if (exported > 0) {
+        setBatchMessage(props.t("batchExportComplete").replace("{count}", String(exported)));
+      }
+    } catch (error) {
+      setBatchMessage(formatError(error));
+    } finally {
+      setBatchBusy(null);
+    }
+  };
+
+  const deleteSelected = async () => {
+    if (selectedResults().length === 0) return;
+    setBatchBusy("delete");
+    setBatchMessage("");
+    try {
+      const deletedIds = await props.onDeleteSelected(selectedResults().map(({ asset, record }) => ({
+        runId: record.id,
+        outputId: asset.id,
+      })));
+      const deleted = new Set(deletedIds);
+      setSelectedAssetIds((selected) => new Set([...selected].filter((id) => !deleted.has(id))));
+      setDeleteConfirmOpen(false);
+      if (deleted.size > 0) {
+        setBatchMessage(props.t("batchDeleteComplete").replace("{count}", String(deleted.size)));
+      }
+      if (deleted.size > 0 && selectedAssetIds().size === 0) setSelectionMode(false);
+    } catch (error) {
+      setBatchMessage(formatError(error));
+    } finally {
+      setBatchBusy(null);
+    }
+  };
 
   const copyImage = async (asset: GeneratedAsset, assetUrl: string) => {
     setCopyError("");
@@ -593,6 +704,10 @@ export function ResultsPage(props: BaseProps & {
             <IconButton label={props.t("gridView")} active={viewMode() === "grid"} onClick={() => setViewMode("grid")}><LayoutGrid size={16} /></IconButton>
             <IconButton label={props.t("listView")} active={viewMode() === "list"} onClick={() => setViewMode("list")}><ListIcon size={16} /></IconButton>
           </div>
+          <button class={`button ${selectionMode() ? "primary" : "secondary"}`} type="button" onClick={toggleSelectionMode}>
+            <Show when={selectionMode()} fallback={<ListChecks size={16} />}><X size={16} /></Show>
+            {props.t(selectionMode() ? "exitSelection" : "multiSelect")}
+          </button>
           <button class="button secondary" type="button" onClick={props.onOpenFolder}>
             <FolderOpen size={16} />
             {props.t("openProjectFolder")}
@@ -600,6 +715,22 @@ export function ResultsPage(props: BaseProps & {
         </div>
       </header>
       <Show when={copyError()}><p class="form-error page-form-error" role="alert">{copyError()}</p></Show>
+      <Show when={batchMessage()}><p class="results-batch-message" role="status">{batchMessage()}</p></Show>
+
+      <Show when={selectionMode()}>
+        <div class="results-selection-toolbar">
+          <div>
+            <strong>{props.t("selectedImagesCount").replace("{count}", String(selectedAssetIds().size))}</strong>
+            <span>{props.t("resultCount").replace("{count}", String(allAssets().length))}</span>
+          </div>
+          <div>
+            <button class="button ghost compact" type="button" onClick={selectAllAssets} disabled={selectedAssetIds().size === allAssets().length}><Check size={15} />{props.t("selectAll")}</button>
+            <button class="button ghost compact" type="button" onClick={() => setSelectedAssetIds(new Set<string>())} disabled={selectedAssetIds().size === 0}><X size={15} />{props.t("clearSelection")}</button>
+            <button class="button secondary compact" type="button" onClick={() => void downloadSelected()} disabled={selectedAssetIds().size === 0 || batchBusy() !== null}><Download size={15} />{props.t("downloadSelected")}</button>
+            <button class="button danger compact" type="button" onClick={() => setDeleteConfirmOpen(true)} disabled={selectedAssetIds().size === 0 || batchBusy() !== null}><Trash2 size={15} />{props.t("deleteSelected")}</button>
+          </div>
+        </div>
+      </Show>
 
       <Show
         when={allAssets().length > 0}
@@ -611,14 +742,20 @@ export function ResultsPage(props: BaseProps & {
             <div class="results-list-full">
               <For each={allAssets()}>
                 {({ asset, record }) => (
-                  <article class="result-list-row">
+                  <article class={`result-list-row ${selectedAssetIds().has(asset.id) ? "is-selected" : ""} ${selectionMode() ? "is-selectable" : ""}`}>
+                    <Show when={selectionMode()}>
+                      <label class="result-selection-check">
+                        <input type="checkbox" aria-label={props.t("selectResult")} checked={selectedAssetIds().has(asset.id)} onChange={() => toggleAssetSelection(asset.id)} />
+                        <span><Check size={13} /></span>
+                      </label>
+                    </Show>
                     <div class="result-list-thumb"><img src={asset.url} alt={asset.prompt} loading="lazy" /></div>
                     <div class="result-list-copy">
                       <strong title={asset.prompt}>{asset.prompt || record.prompt}</strong>
                       <span>{record.model} · {asset.width} x {asset.height} · {asset.format.toUpperCase()}</span>
                     </div>
                     <time class="result-list-date" dateTime={asset.createdAt}>{new Date(asset.createdAt).toLocaleDateString()}</time>
-                    {assetActions(asset)}
+                    <Show when={!selectionMode()}>{assetActions(asset)}</Show>
                   </article>
                 )}
               </For>
@@ -628,7 +765,13 @@ export function ResultsPage(props: BaseProps & {
           <div class="results-grid-full">
             <For each={allAssets()}>
               {({ asset, record }) => (
-                <article class="result-gallery-card">
+                <article class={`result-gallery-card ${selectedAssetIds().has(asset.id) ? "is-selected" : ""} ${selectionMode() ? "is-selectable" : ""}`}>
+                  <Show when={selectionMode()}>
+                    <label class="result-selection-check result-selection-overlay">
+                      <input type="checkbox" aria-label={props.t("selectResult")} checked={selectedAssetIds().has(asset.id)} onChange={() => toggleAssetSelection(asset.id)} />
+                      <span><Check size={13} /></span>
+                    </label>
+                  </Show>
                   <div class="result-gallery-thumb">
                     <img src={asset.url} alt={asset.prompt} loading="lazy" />
                     <span>{asset.width} x {asset.height}</span>
@@ -638,7 +781,7 @@ export function ResultsPage(props: BaseProps & {
                       <strong title={asset.prompt}>{asset.prompt || record.prompt}</strong>
                       <div><span>{record.model}</span><time dateTime={asset.createdAt}>{new Date(asset.createdAt).toLocaleDateString()}</time></div>
                     </div>
-                    {assetActions(asset)}
+                    <Show when={!selectionMode()}>{assetActions(asset)}</Show>
                   </div>
                 </article>
               )}
@@ -646,6 +789,23 @@ export function ResultsPage(props: BaseProps & {
           </div>
         </Show>
       </Show>
+      <Modal
+        open={deleteConfirmOpen()}
+        title={props.t("batchDeleteTitle")}
+        subtitle={props.t("batchDeleteDescription").replace("{count}", String(selectedAssetIds().size))}
+        onClose={() => !batchBusy() && setDeleteConfirmOpen(false)}
+        footer={(
+          <>
+            <button class="button secondary" type="button" disabled={batchBusy() !== null} onClick={() => setDeleteConfirmOpen(false)}>{props.t("cancel")}</button>
+            <button class="button danger" type="button" disabled={batchBusy() !== null} onClick={() => void deleteSelected()}><Trash2 size={16} />{props.t("confirmDeleteSelected")}</button>
+          </>
+        )}
+      >
+        <div class="batch-delete-summary">
+          <Images size={20} />
+          <span>{props.t("batchDeleteLocalHint")}</span>
+        </div>
+      </Modal>
     </div>
   );
 }

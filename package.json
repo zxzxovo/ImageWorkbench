@@ -1,7 +1,8 @@
 {
   "name": "imageworkbench",
   "private": true,
-  "version": "0.1.6",
+  "version": "0.2.0",
+  "license": "Apache-2.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -10,13 +11,16 @@
     "tauri": "tauri",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "check:version": "node scripts/check-version.mjs"
   },
   "dependencies": {
     "@kobalte/core": "^0.13.0",
     "@tauri-apps/api": "^2.0.0",
     "@tauri-apps/plugin-dialog": "^2.0.0",
     "@tauri-apps/plugin-opener": "^2.0.0",
+    "@tauri-apps/plugin-process": "^2.0.0",
+    "@tauri-apps/plugin-updater": "^2.0.0",
     "lucide-solid": "^0.468.0",
     "solid-js": "^1.9.0"
   },

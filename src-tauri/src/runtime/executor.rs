@@ -10,6 +10,8 @@ use tokio::sync::Semaphore;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
+const MAX_REMOTE_POLL_FAILURES: u64 = 10;
+
 use crate::app_state::{AppState, QueueGate};
 use crate::bridge::{
     CommandError, CommandResult, GenerateImagesRequest, GeneratedAsset, GenerationCommandResult,
@@ -318,10 +320,30 @@ async fn record_remote_poll_failure(
         "lastPollError".to_owned(),
         json!({ "code": error.code, "message": error.message }),
     );
-    task.next_poll_at = Some(Utc::now() + remote_poll_backoff(failures));
+    let terminal = failures >= MAX_REMOTE_POLL_FAILURES;
+    if terminal {
+        task.status = "failed".to_owned();
+        task.next_poll_at = None;
+    } else {
+        task.next_poll_at = Some(Utc::now() + remote_poll_backoff(failures));
+    }
     task.updated_at = Utc::now();
     project.upsert_remote_task(task).await?;
-    if project.run(&task.run_id).await?.is_some() {
+    if let Some(mut run) = project.run(&task.run_id).await? {
+        if terminal {
+            run.status = domain::RunStatus::Failed;
+            run.finished_at = Some(Utc::now());
+            run.updated_at = Utc::now();
+            project.upsert_run(&run).await?;
+            if let Some(job_id) = &task.job_id
+                && let Some(mut job) = project.job(job_id).await?
+            {
+                job.status = domain::JobStatus::Failed;
+                job.next_poll_at = None;
+                job.updated_at = Utc::now();
+                project.upsert_job(&job).await?;
+            }
+        }
         project
             .save_error(&domain::ErrorRecord {
                 id: Uuid::new_v4().to_string(),
@@ -331,7 +353,7 @@ async fn record_remote_poll_failure(
                     code: error.code.clone(),
                     message: error.message.clone(),
                     http_status: None,
-                    retryable: true,
+                    retryable: !terminal,
                     request_id: Some(task.remote_id.clone()),
                     provider: None,
                     details: error.details.clone(),
@@ -1248,7 +1270,11 @@ async fn persist_remote_task(
             remote_id: remote.id.clone(),
             task_type: remote_job_kind(remote.kind).to_owned(),
             status: remote_job_status(remote.status).to_owned(),
-            next_poll_at: Some(Utc::now() + Duration::seconds(2)),
+            next_poll_at: matches!(
+                remote.status,
+                provider::RemoteJobStatus::Queued | provider::RemoteJobStatus::Running
+            )
+            .then(|| Utc::now() + Duration::seconds(2)),
             metadata: sanitize_provider_json(&remote.raw)
                 .as_object()
                 .cloned()
@@ -1434,7 +1460,13 @@ fn remote_job_kind(kind: provider::RemoteJobKind) -> &'static str {
 fn sanitize_filename(name: &str) -> String {
     let cleaned: String = name
         .chars()
-        .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' || c == '.' { c } else { '_' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' || c == '_' || c == '.' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect();
     // Collapse consecutive underscores and trim leading/trailing ones.
     let collapsed = cleaned
@@ -1442,7 +1474,11 @@ fn sanitize_filename(name: &str) -> String {
         .filter(|s| !s.is_empty())
         .collect::<Vec<_>>()
         .join("_");
-    if collapsed.is_empty() { "output".to_owned() } else { collapsed }
+    if collapsed.is_empty() {
+        "output".to_owned()
+    } else {
+        collapsed
+    }
 }
 
 fn remote_job_status(status: provider::RemoteJobStatus) -> &'static str {

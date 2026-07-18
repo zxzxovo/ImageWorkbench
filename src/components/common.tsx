@@ -1,4 +1,4 @@
-import { Show, type JSX, type ParentProps } from "solid-js";
+import { Show, createEffect, onCleanup, type JSX, type ParentProps } from "solid-js";
 import { X } from "lucide-solid";
 
 export function IconButton(props: {
@@ -76,21 +76,72 @@ export function Modal(props: ParentProps<{
   onClose: () => void;
   size?: "medium" | "large" | "wide";
   footer?: JSX.Element;
+  closeLabel?: string;
 }>) {
+  let shell: HTMLElement | undefined;
+  let previouslyFocused: HTMLElement | null = null;
+  const titleId = `modal-title-${crypto.randomUUID()}`;
+  const subtitleId = `modal-subtitle-${crypto.randomUUID()}`;
   const onOverlayClick: JSX.EventHandlerUnion<HTMLDivElement, MouseEvent> = (event) => {
     if (event.target === event.currentTarget) props.onClose();
   };
 
+  const onKeyDown: JSX.EventHandlerUnion<HTMLElement, KeyboardEvent> = (event) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      props.onClose();
+      return;
+    }
+    if (event.key !== "Tab" || !shell) return;
+    const focusable = [...shell.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    )].filter((item) => !item.hidden && item.getAttribute("aria-hidden") !== "true");
+    if (focusable.length === 0) {
+      event.preventDefault();
+      shell.focus();
+      return;
+    }
+    const first = focusable[0];
+    const last = focusable.at(-1)!;
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  };
+
+  createEffect(() => {
+    if (!props.open) return;
+    previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    queueMicrotask(() => {
+      const first = shell?.querySelector<HTMLElement>('[autofocus], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])');
+      (first ?? shell)?.focus();
+    });
+    onCleanup(() => previouslyFocused?.focus());
+  });
+
   return (
     <Show when={props.open}>
       <div class="modal-overlay" role="presentation" onMouseDown={onOverlayClick}>
-        <section class={`modal-shell modal-${props.size ?? "medium"}`} role="dialog" aria-modal="true" aria-label={props.title}>
+        <section
+          ref={shell}
+          class={`modal-shell modal-${props.size ?? "medium"}`}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby={titleId}
+          aria-describedby={props.subtitle ? subtitleId : undefined}
+          tabindex="-1"
+          onKeyDown={onKeyDown}
+        >
           <header class="modal-header">
             <div>
-              <h2>{props.title}</h2>
-              <Show when={props.subtitle}><p>{props.subtitle}</p></Show>
+              <h2 id={titleId}>{props.title}</h2>
+              <Show when={props.subtitle}><p id={subtitleId}>{props.subtitle}</p></Show>
             </div>
-            <IconButton label="Close" onClick={props.onClose}><X size={18} /></IconButton>
+            <IconButton label={props.closeLabel ?? "Close"} onClick={props.onClose}><X size={18} /></IconButton>
           </header>
           <div class="modal-body">{props.children}</div>
           <Show when={props.footer}>

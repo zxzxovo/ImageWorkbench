@@ -6,6 +6,8 @@ test("creator keeps one prompt editor and removes redundant shell controls", asy
   await expect(page.locator(".prompt-editor-panel")).toBeVisible();
 
   expect(await page.locator(".creator-layout textarea.prompt-input").count()).toBe(1);
+  await expect(page.locator(".creator-step")).toHaveCount(3);
+  await expect(page.getByRole("button", { name: /Generate|开始生成/ })).toHaveCount(1);
   expect(await page.locator(".prompt-section").count()).toBe(0);
   expect(await page.locator(".provider-summary").count()).toBe(0);
   expect(await page.locator(".project-menu").count()).toBe(0);

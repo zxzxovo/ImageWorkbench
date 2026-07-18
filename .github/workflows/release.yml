@@ -5,6 +5,11 @@ on:
     tags:
       - 'v*'
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Existing v* tag to package (leave empty for a draft build)'
+        required: false
+        type: string
 
 jobs:
   release:
@@ -19,6 +24,8 @@ jobs:
           - platform: 'macos-latest'
             args: '--target x86_64-apple-darwin'
           - platform: 'ubuntu-22.04'
+            args: ''
+          - platform: 'ubuntu-24.04'
             args: ''
           - platform: 'windows-latest'
             args: ''
@@ -43,10 +50,10 @@ jobs:
           workspaces: src-tauri
 
       - name: Install Linux dependencies
-        if: matrix.platform == 'ubuntu-22.04'
+        if: startsWith(matrix.platform, 'ubuntu-')
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf rpm libfuse2
 
       - name: Install frontend dependencies
         run: bun install --frozen-lockfile
@@ -54,13 +61,40 @@ jobs:
       - name: Build frontend
         run: bun run build
 
+      - name: Verify release version
+        run: bun run check:version
+
+      - name: Require signing for tagged releases
+        if: startsWith(github.ref, 'refs/tags/') && (vars.SIGNING_MODE == '' || vars.SIGNING_MODE == 'none')
+        run: echo "Tagged releases require SIGNING_MODE=pfx or SIGNING_MODE=azure" && exit 1
+
+      - name: Run release quality gate
+        run: |
+          bun run test
+          cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
+          cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --all-features -- -D warnings
+          cargo test --manifest-path src-tauri/Cargo.toml
+
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SIGNING_MODE: ${{ vars.SIGNING_MODE || 'none' }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          tagName: ${{ github.ref_name }}
+          tagName: ${{ inputs.release_tag || github.ref_name }}
           releaseName: 'ImageWorkbench ${{ github.ref_name }}'
           releaseBody: 'See the assets to download and install this version.'
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}
+
+      - name: Generate checksums
+        if: always() && startsWith(matrix.platform, 'ubuntu-')
+        shell: bash
+        run: |
+          find src-tauri/target/release/bundle -type f \( -name '*.AppImage' -o -name '*.deb' -o -name '*.rpm' \) -print0 | xargs -0 -r sha256sum > checksums-${{ matrix.platform }}.txt
+          test -s checksums-${{ matrix.platform }}.txt
+          gh release upload "${{ inputs.release_tag || github.ref_name }}" checksums-${{ matrix.platform }}.txt --clobber || true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

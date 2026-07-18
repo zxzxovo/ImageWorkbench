@@ -65,6 +65,8 @@ describe("ResultsPage", () => {
         onReveal={vi.fn()}
         onOpenFolder={vi.fn()}
         onDownload={vi.fn()}
+        onDeleteSelected={vi.fn(async () => [])}
+        onDownloadSelected={vi.fn(async () => 0)}
       />
     ));
 
@@ -74,5 +76,34 @@ describe("ResultsPage", () => {
     expect(container.querySelector(".results-grid-full")).toBeNull();
     expect(container.querySelector(".results-list-full")).not.toBeNull();
     expect(container.querySelector(".result-list-thumb img")).not.toBeNull();
+  });
+
+  it("selects results for batch download and asset-level deletion", async () => {
+    const onDownloadSelected = vi.fn(async () => 1);
+    const onDeleteSelected = vi.fn(async () => ["asset-1"]);
+    render(() => (
+      <ResultsPage
+        project={project}
+        providers={[]}
+        history={[record]}
+        t={(key) => key}
+        onReveal={vi.fn()}
+        onOpenFolder={vi.fn()}
+        onDownload={vi.fn()}
+        onDeleteSelected={onDeleteSelected}
+        onDownloadSelected={onDownloadSelected}
+      />
+    ));
+
+    await fireEvent.click(screen.getByRole("button", { name: "multiSelect" }));
+    await fireEvent.click(screen.getByRole("checkbox", { name: "selectResult" }));
+    expect(screen.getByText("selectedImagesCount").textContent).toBe("selectedImagesCount");
+
+    await fireEvent.click(screen.getByRole("button", { name: "downloadSelected" }));
+    expect(onDownloadSelected).toHaveBeenCalledWith([record.assets[0]]);
+
+    await fireEvent.click(screen.getByRole("button", { name: "deleteSelected" }));
+    await fireEvent.click(screen.getByRole("button", { name: "confirmDeleteSelected" }));
+    expect(onDeleteSelected).toHaveBeenCalledWith([{ runId: record.id, outputId: "asset-1" }]);
   });
 });

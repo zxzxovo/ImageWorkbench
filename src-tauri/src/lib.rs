@@ -1,3 +1,16 @@
+// The provider adapter boundary intentionally uses a rich error type so
+// callers can preserve redacted diagnostics. These legacy structural lints
+// are tracked for a future API-wide refactor and are not correctness issues.
+#![allow(
+    clippy::collapsible_if,
+    clippy::derivable_impls,
+    clippy::large_enum_variant,
+    clippy::manual_inspect,
+    clippy::needless_lifetimes,
+    clippy::result_large_err,
+    clippy::too_many_arguments
+)]
+
 pub mod app_state;
 pub mod bridge;
 pub mod commands;
@@ -31,6 +44,8 @@ pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(specta_builder.invoke_handler())
         .setup(move |app| {
             let app_data_directory = app.path().app_data_dir()?;
@@ -51,8 +66,18 @@ pub fn run() {
             specta_builder.mount_events(app);
             Ok(())
         })
-        .build(tauri::generate_context!())
-        .expect("error while building ImageWorkbench");
+        .build(tauri::generate_context!());
+
+    let app = match app {
+        Ok(app) => app,
+        Err(error) => {
+            // Do not panic with the unhelpful "builder error" message on a
+            // target machine. The full cause is already in the log when file
+            // logging is available, and stderr remains useful for installers.
+            eprintln!("ImageWorkbench could not start: {error:#}");
+            return;
+        }
+    };
 
     app.run(|app_handle, event| {
         if matches!(event, tauri::RunEvent::ExitRequested { .. }) {
