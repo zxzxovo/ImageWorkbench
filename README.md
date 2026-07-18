@@ -13,6 +13,23 @@ ImageWorkbench is a local-first desktop workbench for generating and editing ima
 - **Feat** Streaming API enabled by default for all models that support it, reducing timeout failures on slow generations
 - **Cleanup** Removed redundant settings icon from top bar, `+` button from sidebar Projects header, and New / Open Project entries from the project dropdown
 
+## Supported desktop platforms
+
+The 0.2.x release line is supported on Windows 10/11 x86_64 and Linux x86_64
+(Ubuntu 22.04/24.04, Debian 12/13, and current/previous Fedora releases) on
+both Wayland and X11. Linux packages are published as AppImage, DEB, and RPM.
+ARM64 builds are preview-only and are not covered by the release support
+promise. macOS x86_64 and Apple Silicon builds remain supported.
+
+Windows release artifacts are unsigned until a maintainer configures the
+signing interface. Set `SIGNING_MODE=none|pfx|azure` in the release environment;
+`none` is for internal/draft artifacts only, while public releases must use
+`pfx` or `azure` and the corresponding Tauri signing secrets.
+
+The updater checks a signed Tauri update manifest and always asks for user
+confirmation before downloading and installing. AppImage updates are handled
+in-app; DEB/RPM updates follow the system package manager.
+
 ## Stack
 
 - Rust 2024 and Tauri 2
@@ -46,11 +63,12 @@ Imported inputs are copied into the project. Provider responses, usage, request 
 
 ```powershell
 bun run build
+bun run check:version
 bun run test
 bun run test:e2e
 cargo test --manifest-path src-tauri/Cargo.toml
 cargo check --manifest-path src-tauri/Cargo.toml
-bun run tauri build --debug --no-bundle
+bun run tauri build
 ```
 
 Live provider tests are opt-in and require locally configured credentials. Normal tests use mock HTTP servers.

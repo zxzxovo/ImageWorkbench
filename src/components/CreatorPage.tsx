@@ -1,4 +1,4 @@
-import { For, Show, createMemo, createSignal, onMount, onCleanup } from "solid-js";
+import { For, Show, createEffect, createMemo, createSignal, onMount, onCleanup } from "solid-js";
 import type { SetStoreFunction } from "solid-js/store";
 import {
   AlertTriangle,
@@ -106,6 +106,16 @@ export default function CreatorPage(props: CreatorPageProps) {
   const partialResults = createMemo(() => projectTasks()
     .filter((task) => task.status === "running" || task.status === "queued")
     .flatMap((task) => (task.partialImages ?? []).map((image) => ({ ...image, taskId: task.id }))));
+
+  createEffect(() => {
+    props.project.id;
+    setAdvancedOpen(false);
+    setValidationMessage("");
+    setSelectedTask(null);
+    setReferenceEntryMode(null);
+    setReferenceValue("");
+    setDraggedReferenceId("");
+  });
 
   const setProvider = (providerId: string) => {
     const nextProvider = enabledProviders().find((item) => item.id === providerId);
@@ -348,20 +358,23 @@ export default function CreatorPage(props: CreatorPageProps) {
 
   return (
     <div class="page create-page">
-      <header class="page-header">
+      <header class="page-header create-page-header">
         <div>
           <h1>{props.t("createTitle")}</h1>
           <p>{props.t("createSubtitle")}</p>
         </div>
         <div class="header-actions">
           <button class="button secondary" type="button" onClick={() => props.onReveal(props.project.storagePath)}><FolderOpen size={16} />{props.t("openFolder")}</button>
-          <button class="button primary generate-button" type="button" onClick={generate}><WandSparkles size={17} />{props.t("generate")}</button>
         </div>
       </header>
 
       <div class="creator-layout">
         <section class="work-panel composer-panel">
           <div class="panel-section provider-section">
+            <div class="creator-section-heading">
+              <span class="creator-step">1</span>
+              <div><h2>{props.t("generationSetup")}</h2><p>{props.t("generationSetupHint")}</p></div>
+            </div>
             <div class="control-grid provider-controls">
               <Field label={props.t("provider")}>
                 <div class="select-with-action">
@@ -378,7 +391,7 @@ export default function CreatorPage(props: CreatorPageProps) {
               </Field>
             </div>
 
-            <Field label={props.t("mode")}>
+            <Field label={props.t("mode")} class="creator-mode-field">
               <div class="segmented mode-segmented">
                 <For each={capabilities().modes}>
                   {(mode) => {
@@ -427,9 +440,10 @@ export default function CreatorPage(props: CreatorPageProps) {
           </div>
 
           <div class="panel-section reference-section">
-            <div class="section-row">
-              <div>
-                <h2>{props.t("references")}</h2>
+            <div class="section-row creator-reference-header">
+              <div class="creator-section-heading">
+                <span class="creator-step">2</span>
+                <div><h2>{props.t("references")}</h2><p>{props.t("referenceSetupHint")}</p></div>
                 <span class="section-count">{props.draft.references.length}/{capabilities().maxReferences}</span>
               </div>
               <div class="button-row">
@@ -526,6 +540,7 @@ export default function CreatorPage(props: CreatorPageProps) {
                   sourceUrl={props.draft.references[0] ? api.referencePreviewUrl(props.draft.references[0]) : undefined}
                   sourceWidth={props.draft.references[0]?.width ?? 1}
                   sourceHeight={props.draft.references[0]?.height ?? 1}
+                  initialMaskDataUrl={props.draft.maskDataUrl}
                   onChange={(dataUrl) => props.setDraft("maskDataUrl", dataUrl)}
                 />
               </Show>
@@ -689,8 +704,11 @@ export default function CreatorPage(props: CreatorPageProps) {
 
         <aside class="creator-side">
           <section class="work-panel prompt-editor-panel">
-            <div class="panel-heading">
-              <div><SquarePen size={16} /><h2>{props.t("promptEditor")}</h2></div>
+            <div class="panel-heading creator-prompt-heading">
+              <div>
+                <span class="creator-step">3</span>
+                <span class="creator-prompt-title"><h2>{props.t("promptEditor")}</h2><small>{props.t("promptEditorHint")}</small></span>
+              </div>
             </div>
             <div class="prompt-editor-body">
               <Show when={props.project.settings.useCommonDescriptions && props.project.descriptions.some((item) => item.enabled && (item.prefixContent.trim() || item.suffixContent.trim() || item.negativeContent.trim()))}>
@@ -708,14 +726,14 @@ export default function CreatorPage(props: CreatorPageProps) {
                 }}
               />
               <div class="prompt-meta">
-                <span>{props.draft.prompt.length.toLocaleString()} chars</span>
+                <span>{props.t("characterCount").replace("{count}", props.draft.prompt.length.toLocaleString())}</span>
                 <Show when={validationMessage()}><span class="validation-message">{validationMessage()}</span></Show>
               </div>
             </div>
             <div class="request-summary">
               <span>{provider()?.name}</span><span>{props.draft.model}</span><span>{props.draft.aspectRatio}</span><span>{props.draft.size}</span><span>×{props.draft.count}</span>
             </div>
-            <button class="button primary full-width" type="button" onClick={generate}><WandSparkles size={17} />{props.t("generate")}</button>
+            <button class="button primary full-width" type="button" disabled={!provider() || provider()!.models.length === 0} onClick={generate}><WandSparkles size={17} />{props.t("generate")}</button>
           </section>
 
           <section class="work-panel task-panel">

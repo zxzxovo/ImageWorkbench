@@ -92,10 +92,12 @@ describe("CreatorPage", () => {
       );
     }
 
-    render(() => <Harness />);
+    const { container } = render(() => <Harness />);
+    expect(container.querySelectorAll(".creator-step")).toHaveLength(3);
+    expect(screen.getAllByRole("button", { name: "generate" })).toHaveLength(1);
     expect(screen.getByRole("alert").textContent).toContain("generationReferenceValidation");
 
-    await fireEvent.click(screen.getAllByRole("button", { name: "generate" })[0]);
+    await fireEvent.click(screen.getByRole("button", { name: "generate" }));
     expect(onGenerate).not.toHaveBeenCalled();
 
     await fireEvent.click(screen.getByRole("button", { name: "switchToEditMode" }));

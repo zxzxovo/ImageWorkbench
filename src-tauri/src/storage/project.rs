@@ -58,6 +58,13 @@ pub struct RunDeleteResult {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
+pub struct OutputDeleteResult {
+    pub deleted: bool,
+    pub local_asset_deleted: bool,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
 pub struct ProviderRemapResult {
     pub summaries: u32,
     pub presets: u32,
@@ -76,6 +83,21 @@ pub struct ProjectStore {
 
 impl ProjectStore {
     pub async fn create(root: impl AsRef<Path>, name: impl Into<String>) -> StorageResult<Self> {
+        let root = root.as_ref();
+        if root.exists() {
+            if !root.is_dir() {
+                return Err(StorageError::InvalidProject(format!(
+                    "{} is not a directory",
+                    root.display()
+                )));
+            }
+            if fs::read_dir(root)?.next().transpose()?.is_some() {
+                return Err(StorageError::Conflict(format!(
+                    "{} is not empty; open the existing project or choose an empty directory",
+                    root.display()
+                )));
+            }
+        }
         let layout = ProjectLayout::create(root)?;
         let pool = connect(&layout).await?;
         migrate(&pool, PROJECT_MIGRATIONS).await?;
@@ -115,6 +137,148 @@ impl ProjectStore {
 
     pub fn pool(&self) -> &SqlitePool {
         &self.pool
+    }
+
+    pub async fn snapshot_database(&self, destination: impl AsRef<Path>) -> StorageResult<()> {
+        let destination = destination.as_ref().to_string_lossy().into_owned();
+        sqlx::query("VACUUM INTO ?")
+            .bind(destination)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn detach_remote_lifecycle(&self) -> StorageResult<()> {
+        let mut transaction = self.pool.begin().await?;
+        sqlx::query("DELETE FROM remote_tasks")
+            .execute(&mut *transaction)
+            .await?;
+        sqlx::query("DELETE FROM remote_files")
+            .execute(&mut *transaction)
+            .await?;
+        let output_rows = sqlx::query("SELECT id, output_json FROM output_parts")
+            .fetch_all(&mut *transaction)
+            .await?;
+        for row in output_rows {
+            let mut output: OutputPart =
+                serde_json::from_str(row.get::<String, _>("output_json").as_str())?;
+            output.remote_url = None;
+            output.provider_file_id = None;
+            output.metadata.remove("publicUrl");
+            output.metadata.remove("publicUrlExpiresAt");
+            sqlx::query("UPDATE output_parts SET output_json = ? WHERE id = ?")
+                .bind(serde_json::to_string(&output)?)
+                .bind(row.get::<String, _>("id"))
+                .execute(&mut *transaction)
+                .await?;
+        }
+        let run_rows = sqlx::query("SELECT id, run_json FROM runs")
+            .fetch_all(&mut *transaction)
+            .await?;
+        for row in run_rows {
+            let mut run: RunRecord =
+                serde_json::from_str(row.get::<String, _>("run_json").as_str())?;
+            run.provider_request_id = None;
+            run.request.metadata.remove("continuationId");
+            sqlx::query("UPDATE runs SET run_json = ? WHERE id = ?")
+                .bind(serde_json::to_string(&run)?)
+                .bind(row.get::<String, _>("id"))
+                .execute(&mut *transaction)
+                .await?;
+        }
+        let job_rows = sqlx::query("SELECT id, job_json FROM jobs")
+            .fetch_all(&mut *transaction)
+            .await?;
+        for row in job_rows {
+            let mut job: JobRecord =
+                serde_json::from_str(row.get::<String, _>("job_json").as_str())?;
+            job.remote_job_id = None;
+            job.remote_batch_id = None;
+            job.next_poll_at = None;
+            job.request.metadata.remove("continuationId");
+            sqlx::query("UPDATE jobs SET remote_job_id = NULL, remote_batch_id = NULL, job_json = ? WHERE id = ?")
+                .bind(serde_json::to_string(&job)?)
+                .bind(row.get::<String, _>("id"))
+                .execute(&mut *transaction)
+                .await?;
+        }
+        transaction.commit().await?;
+        Ok(())
+    }
+
+    pub async fn provider_reference_count(&self, provider_profile_id: &str) -> StorageResult<u64> {
+        let mut total = 0_u64;
+        let summary = self.summary().await?;
+        if summary.default_provider_profile_id.as_deref() == Some(provider_profile_id) {
+            total += 1;
+        }
+        for (table, column) in [
+            ("conversations", "provider_profile_id"),
+            ("runs", "provider_profile_id"),
+            ("remote_tasks", "provider_profile_id"),
+            ("remote_files", "provider_profile_id"),
+        ] {
+            let sql = format!("SELECT COUNT(*) FROM {table} WHERE {column} = ?");
+            let count: i64 = sqlx::query_scalar(&sql)
+                .bind(provider_profile_id)
+                .fetch_one(&self.pool)
+                .await?;
+            total = total.saturating_add(u64::try_from(count).unwrap_or_default());
+        }
+        total = total.saturating_add(
+            self.list_presets()
+                .await?
+                .into_iter()
+                .filter(|preset| preset.provider_profile_id.as_deref() == Some(provider_profile_id))
+                .count() as u64,
+        );
+        Ok(total)
+    }
+
+    pub async fn has_active_work(&self) -> StorageResult<bool> {
+        let local: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM runs WHERE status IN ('queued', 'running', 'paused')",
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        let remote: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM remote_tasks WHERE status IN ('queued', 'running')",
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(local > 0 || remote > 0)
+    }
+
+    pub async fn remap_project_id(&self, project_id: &str) -> StorageResult<()> {
+        let mut transaction = self.pool.begin().await?;
+        let run_rows = sqlx::query("SELECT id, run_json FROM runs")
+            .fetch_all(&mut *transaction)
+            .await?;
+        for row in run_rows {
+            let mut run: RunRecord =
+                serde_json::from_str(row.get::<String, _>("run_json").as_str())?;
+            run.request.project_id = project_id.to_owned();
+            sqlx::query("UPDATE runs SET run_json = ? WHERE id = ?")
+                .bind(serde_json::to_string(&run)?)
+                .bind(row.get::<String, _>("id"))
+                .execute(&mut *transaction)
+                .await?;
+        }
+        let job_rows = sqlx::query("SELECT id, job_json FROM jobs")
+            .fetch_all(&mut *transaction)
+            .await?;
+        for row in job_rows {
+            let mut job: JobRecord =
+                serde_json::from_str(row.get::<String, _>("job_json").as_str())?;
+            job.request.project_id = project_id.to_owned();
+            sqlx::query("UPDATE jobs SET job_json = ? WHERE id = ?")
+                .bind(serde_json::to_string(&job)?)
+                .bind(row.get::<String, _>("id"))
+                .execute(&mut *transaction)
+                .await?;
+        }
+        transaction.commit().await?;
+        Ok(())
     }
 
     pub async fn summary(&self) -> StorageResult<ProjectSummary> {
@@ -472,6 +636,49 @@ impl ProjectStore {
         Ok(())
     }
 
+    pub async fn output(&self, output_id: &str) -> StorageResult<Option<OutputPart>> {
+        fetch_json_by_id(&self.pool, "output_parts", "output_json", output_id).await
+    }
+
+    pub async fn validate_output_local_asset(&self, output_id: &str) -> StorageResult<()> {
+        let output = self
+            .output(output_id)
+            .await?
+            .ok_or_else(|| StorageError::NotFound(format!("output {output_id}")))?;
+        self.safe_output_path(&output).map(|_| ())
+    }
+
+    pub async fn delete_output(
+        &self,
+        output_id: &str,
+        delete_local_asset: bool,
+    ) -> StorageResult<OutputDeleteResult> {
+        let Some(output) = self.output(output_id).await? else {
+            return Ok(OutputDeleteResult::default());
+        };
+        let path = if delete_local_asset {
+            self.safe_output_path(&output)?
+        } else {
+            None
+        };
+        let mut local_asset_deleted = false;
+        if let Some(path) = path
+            && path.is_file()
+        {
+            fs::remove_file(&path)?;
+            local_asset_deleted = true;
+            prune_empty_output_directories(&self.layout, &path)?;
+        }
+        let result = sqlx::query("DELETE FROM output_parts WHERE id = ?")
+            .bind(output_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(OutputDeleteResult {
+            deleted: result.rows_affected() > 0,
+            local_asset_deleted,
+        })
+    }
+
     pub async fn list_outputs(&self, run_id: &str) -> StorageResult<Vec<OutputPart>> {
         let rows = sqlx::query(
             "SELECT output_json FROM output_parts WHERE run_id = ? ORDER BY sequence, id",
@@ -717,6 +924,32 @@ impl ProjectStore {
         Ok(false)
     }
 
+    pub async fn remote_file_is_referenced_by_other_output(
+        &self,
+        output_id: &str,
+        provider_profile_id: &str,
+        provider_file_id: &str,
+    ) -> StorageResult<bool> {
+        let rows = sqlx::query(
+            r#"SELECT output_parts.output_json
+               FROM output_parts
+               INNER JOIN runs ON runs.id = output_parts.run_id
+               WHERE output_parts.id <> ? AND runs.provider_profile_id = ?"#,
+        )
+        .bind(output_id)
+        .bind(provider_profile_id)
+        .fetch_all(&self.pool)
+        .await?;
+        for row in rows {
+            let output: OutputPart =
+                serde_json::from_str(row.get::<String, _>("output_json").as_str())?;
+            if output.provider_file_id.as_deref() == Some(provider_file_id) {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     pub async fn delete_remote_file(&self, id: &str) -> StorageResult<bool> {
         let result = sqlx::query("DELETE FROM remote_files WHERE id = ?")
             .bind(id)
@@ -738,13 +971,56 @@ impl ProjectStore {
         let Some(mut file) = deserialize_optional::<RemoteFileRecord>(json)? else {
             return Ok(false);
         };
+        let attempts = file
+            .metadata
+            .get("deleteAttempts")
+            .and_then(Value::as_u64)
+            .unwrap_or_default()
+            .saturating_add(1);
+        let exponent = attempts.saturating_sub(1).min(6) as u32;
+        let delay = (5_i64.saturating_mul(2_i64.pow(exponent))).min(300);
         file.metadata.insert("lastDeleteError".to_owned(), error);
+        file.metadata
+            .insert("deleteAttempts".to_owned(), Value::from(attempts));
         file.metadata.insert(
             "lastDeleteAttemptAt".to_owned(),
             Value::String(Utc::now().to_rfc3339()),
         );
+        file.metadata.insert(
+            "nextDeleteRetryAt".to_owned(),
+            Value::String((Utc::now() + chrono::Duration::seconds(delay)).to_rfc3339()),
+        );
         self.upsert_remote_file(&file).await?;
         Ok(true)
+    }
+
+    pub async fn pending_remote_file_deletions(
+        &self,
+        now: DateTime<Utc>,
+    ) -> StorageResult<Vec<RemoteFileRecord>> {
+        let rows = sqlx::query("SELECT file_json FROM remote_files ORDER BY created_at")
+            .fetch_all(&self.pool)
+            .await?;
+        let files = deserialize_rows::<RemoteFileRecord>(rows, "file_json")?;
+        Ok(files
+            .into_iter()
+            .filter(|file| file.metadata.contains_key("lastDeleteError"))
+            .filter(|file| {
+                file.metadata
+                    .get("deleteAttempts")
+                    .and_then(Value::as_u64)
+                    .unwrap_or_default()
+                    < 10
+            })
+            .filter(|file| {
+                file.metadata
+                    .get("nextDeleteRetryAt")
+                    .and_then(Value::as_str)
+                    .and_then(|value| DateTime::parse_from_rfc3339(value).ok())
+                    .map(|value| value.with_timezone(&Utc) <= now)
+                    .unwrap_or(true)
+            })
+            .collect())
     }
 
     pub async fn remap_provider(
@@ -903,26 +1179,33 @@ impl ProjectStore {
     }
 
     async fn safe_run_output_paths(&self, run_id: &str) -> StorageResult<Vec<PathBuf>> {
-        let output_directory = self.layout.output_directory();
-        let output_root = strip_extended_length_prefix(output_directory.canonicalize()?);
         let mut paths = HashSet::new();
         for output in self.list_outputs(run_id).await? {
-            let Some(relative) = output.local_path else {
-                continue;
-            };
-            let resolved = self.layout.resolve_relative(&relative)?;
-            if !resolved.starts_with(&output_directory) {
-                return Err(StorageError::InvalidPath(relative));
-            }
-            if resolved.exists() {
-                let canonical = strip_extended_length_prefix(resolved.canonicalize()?);
-                if !canonical.starts_with(&output_root) {
-                    return Err(StorageError::InvalidPath(relative));
-                }
-                paths.insert(canonical);
+            if let Some(path) = self.safe_output_path(&output)? {
+                paths.insert(path);
             }
         }
         Ok(paths.into_iter().collect())
+    }
+
+    fn safe_output_path(&self, output: &OutputPart) -> StorageResult<Option<PathBuf>> {
+        let Some(relative) = output.local_path.as_ref() else {
+            return Ok(None);
+        };
+        let output_directory = self.layout.output_directory();
+        let resolved = self.layout.resolve_relative(relative)?;
+        if !resolved.starts_with(&output_directory) {
+            return Err(StorageError::InvalidPath(relative.to_owned()));
+        }
+        if !resolved.exists() {
+            return Ok(None);
+        }
+        let output_root = strip_extended_length_prefix(output_directory.canonicalize()?);
+        let canonical = strip_extended_length_prefix(resolved.canonicalize()?);
+        if !canonical.starts_with(&output_root) {
+            return Err(StorageError::InvalidPath(relative.to_owned()));
+        }
+        Ok(Some(canonical))
     }
 
     /// Marks local in-flight work as interrupted. Provider background and batch
@@ -998,7 +1281,11 @@ async fn fetch_json_by_id<T: DeserializeOwned>(
     column: &str,
     id: &str,
 ) -> StorageResult<Option<T>> {
-    let allowed = [("runs", "run_json"), ("jobs", "job_json")];
+    let allowed = [
+        ("runs", "run_json"),
+        ("jobs", "job_json"),
+        ("output_parts", "output_json"),
+    ];
     if !allowed.contains(&(table, column)) {
         return Err(StorageError::InvalidProject(
             "invalid repository table selection".to_owned(),
@@ -1373,6 +1660,58 @@ mod tests {
                 .is_empty()
         );
         assert_eq!(store.list_remote_files("provider").await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn deletes_one_output_without_removing_its_run_or_siblings() {
+        let (_directory, root) = project_root("delete-output");
+        let store = ProjectStore::create(&root, "Delete output").await.unwrap();
+        let run = run_record("provider", "run-delete-output");
+        store.upsert_run(&run).await.unwrap();
+        let now = Utc::now();
+        let output_directory = store
+            .layout()
+            .output_run_directory(now.date_naive(), &run.id)
+            .unwrap();
+        let first_path = output_directory.join("001.png");
+        let second_path = output_directory.join("002.png");
+        fs::write(&first_path, b"first").unwrap();
+        fs::write(&second_path, b"second").unwrap();
+        for (id, sequence, path) in [
+            ("output-first", 0, &first_path),
+            ("output-second", 1, &second_path),
+        ] {
+            store
+                .upsert_output(&OutputPart {
+                    id: id.to_owned(),
+                    run_id: run.id.clone(),
+                    job_id: None,
+                    sequence,
+                    kind: OutputPartKind::Image,
+                    text: None,
+                    local_path: Some(path.strip_prefix(store.layout().root()).unwrap().to_owned()),
+                    remote_url: None,
+                    provider_file_id: None,
+                    mime_type: Some("image/png".to_owned()),
+                    sha256: None,
+                    size_bytes: None,
+                    metadata: BTreeMap::new(),
+                    created_at: now,
+                })
+                .await
+                .unwrap();
+        }
+
+        let result = store.delete_output("output-first", true).await.unwrap();
+
+        assert!(result.deleted);
+        assert!(result.local_asset_deleted);
+        assert!(!first_path.exists());
+        assert!(second_path.exists());
+        assert!(store.run(&run.id).await.unwrap().is_some());
+        let outputs = store.list_outputs(&run.id).await.unwrap();
+        assert_eq!(outputs.len(), 1);
+        assert_eq!(outputs[0].id, "output-second");
     }
 
     #[tokio::test]

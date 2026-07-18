@@ -355,6 +355,7 @@ export const starterProviders: ProviderProfile[] = [
 
 export const demoWorkspace: WorkspaceSnapshot = {
   locale: "zh-CN",
+  theme: "light",
   activeProjectId: "project-atlas",
   projects: demoProjects,
   providers: demoProviders,

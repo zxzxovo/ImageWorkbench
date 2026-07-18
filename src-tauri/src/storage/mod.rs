@@ -3,6 +3,7 @@ mod files;
 mod global;
 mod migrations;
 mod project;
+mod project_lifecycle;
 
 pub use error::{StorageError, StorageResult};
 pub use files::{
@@ -11,5 +12,9 @@ pub use files::{
 };
 pub use global::GlobalStore;
 pub use project::{
-    ProjectStore, ProviderRemapResult, RemoteFileRecord, RemoteTaskRecord, RunDeleteResult,
+    OutputDeleteResult, ProjectStore, ProviderRemapResult, RemoteFileRecord, RemoteTaskRecord,
+    RunDeleteResult,
+};
+pub use project_lifecycle::{
+    ProjectDuplicateMode, delete_owned_project_files, duplicate_project, stage_project_move,
 };

@@ -1,6 +1,7 @@
 use std::time::Duration;
 
 use base64::Engine;
+use futures_util::StreamExt;
 use reqwest::header::{CONTENT_TYPE, HeaderName, HeaderValue, RETRY_AFTER};
 use reqwest::{Method, RequestBuilder, Response};
 use serde_json::Value;
@@ -9,6 +10,12 @@ use super::error::{ProviderError, ProviderErrorKind};
 use super::types::{
     AssetSource, AuthScheme, DownloadedAsset, InputAsset, ProviderConfig, ProviderCredentials,
 };
+
+const MAX_JSON_RESPONSE_BYTES: usize = 10 * 1024 * 1024;
+const MAX_ERROR_RESPONSE_BYTES: usize = 10 * 1024 * 1024;
+const MAX_BASE64_ASSET_BYTES: usize = 50 * 1024 * 1024;
+const MAX_DOWNLOADED_ASSET_BYTES: usize = 100 * 1024 * 1024;
+const MAX_LOCAL_ASSET_BYTES: u64 = 100 * 1024 * 1024;
 
 #[derive(Clone)]
 pub(crate) struct HttpTransport {
@@ -110,7 +117,12 @@ impl HttpTransport {
                     return Err(parse_error_response(response).await);
                 }
                 Ok(DownloadedAsset {
-                    bytes: response.bytes().await?.to_vec(),
+                    bytes: read_response_limited(
+                        response,
+                        MAX_DOWNLOADED_ASSET_BYTES,
+                        "downloaded image",
+                    )
+                    .await?,
                     mime_type,
                     filename: filename_from_url(url),
                 })
@@ -127,7 +139,7 @@ pub(crate) async fn parse_json_response(response: Response) -> Result<JsonRespon
         return Err(parse_error_response(response).await);
     }
     let request_id = request_id_from_headers(response.headers());
-    let bytes = response.bytes().await?;
+    let bytes = read_response_limited(response, MAX_JSON_RESPONSE_BYTES, "JSON response").await?;
     if bytes.is_empty() {
         return Ok(JsonResponse {
             value: Value::Null,
@@ -146,7 +158,15 @@ pub(crate) async fn parse_json_response(response: Response) -> Result<JsonRespon
 pub(crate) async fn parse_error_response(response: Response) -> ProviderError {
     let status = response.status();
     let headers = response.headers().clone();
-    let bytes = response.bytes().await.unwrap_or_default();
+    let bytes =
+        match read_response_limited(response, MAX_ERROR_RESPONSE_BYTES, "error response").await {
+            Ok(bytes) => bytes,
+            Err(mut error) => {
+                error.status = Some(status.as_u16());
+                error.request_id = request_id_from_headers(&headers);
+                return error;
+            }
+        };
     let parsed: Option<Value> = serde_json::from_slice(&bytes).ok();
     let message = parsed
         .as_ref()
@@ -199,6 +219,14 @@ pub(crate) fn input_to_data_uri(asset: &InputAsset) -> Result<String, ProviderEr
         InputAsset::LocalFile {
             path, mime_type, ..
         } => {
+            let size = std::fs::metadata(path).map_err(ProviderError::io)?.len();
+            if size > MAX_LOCAL_ASSET_BYTES {
+                return Err(payload_too_large(
+                    "local input image",
+                    size,
+                    MAX_LOCAL_ASSET_BYTES,
+                ));
+            }
             let bytes = std::fs::read(path).map_err(ProviderError::io)?;
             Ok(format!(
                 "data:{mime_type};base64,{}",
@@ -233,14 +261,73 @@ pub(crate) fn decode_base64_asset(data: &str) -> Result<DownloadedAsset, Provide
     } else {
         (None, data)
     };
+    let estimated_size = encoded.len().saturating_mul(3) / 4;
+    if estimated_size > MAX_BASE64_ASSET_BYTES {
+        return Err(payload_too_large(
+            "base64 image",
+            u64::try_from(estimated_size).unwrap_or(u64::MAX),
+            u64::try_from(MAX_BASE64_ASSET_BYTES).unwrap_or(u64::MAX),
+        ));
+    }
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(encoded)
         .map_err(|error| ProviderError::parse(error.to_string(), None))?;
+    if bytes.len() > MAX_BASE64_ASSET_BYTES {
+        return Err(payload_too_large(
+            "base64 image",
+            u64::try_from(bytes.len()).unwrap_or(u64::MAX),
+            u64::try_from(MAX_BASE64_ASSET_BYTES).unwrap_or(u64::MAX),
+        ));
+    }
     Ok(DownloadedAsset {
         bytes,
         mime_type,
         filename: None,
     })
+}
+
+async fn read_response_limited(
+    response: Response,
+    limit: usize,
+    label: &str,
+) -> Result<Vec<u8>, ProviderError> {
+    if let Some(length) = response.content_length()
+        && length > u64::try_from(limit).unwrap_or(u64::MAX)
+    {
+        return Err(payload_too_large(
+            label,
+            length,
+            u64::try_from(limit).unwrap_or(u64::MAX),
+        ));
+    }
+    let mut bytes = Vec::with_capacity(
+        response
+            .content_length()
+            .and_then(|length| usize::try_from(length).ok())
+            .unwrap_or_default()
+            .min(limit),
+    );
+    let mut stream = response.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk?;
+        if bytes.len().saturating_add(chunk.len()) > limit {
+            return Err(payload_too_large(
+                label,
+                u64::try_from(bytes.len().saturating_add(chunk.len())).unwrap_or(u64::MAX),
+                u64::try_from(limit).unwrap_or(u64::MAX),
+            ));
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    Ok(bytes)
+}
+
+fn payload_too_large(label: &str, actual: u64, limit: u64) -> ProviderError {
+    let mut error =
+        ProviderError::validation(format!("{label} exceeds the {limit} byte safety limit"));
+    error.code = Some("payload_too_large".to_owned());
+    error.details = Some(serde_json::json!({ "actualBytes": actual, "limitBytes": limit }));
+    error
 }
 
 pub(crate) fn encode_path_segment(value: &str) -> Result<String, ProviderError> {

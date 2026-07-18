@@ -1,4 +1,5 @@
 export type Locale = "zh-CN" | "en-US";
+export type ThemeMode = "light" | "dark";
 
 export type ProviderKind = "openai" | "xai" | "gemini" | "custom";
 
@@ -12,6 +13,7 @@ export interface ProviderHeader {
 
 export type WorkspaceTab =
   | "create"
+  | "help"
   | "history"
   | "descriptions"
   | "presets"
@@ -381,8 +383,17 @@ export interface GenerateRequest {
 
 export interface WorkspaceSnapshot {
   locale: Locale;
+  theme?: ThemeMode;
   activeProjectId: string;
   projects: Project[];
   providers: ProviderProfile[];
   history: HistoryRecord[];
+  projectRecovery?: ProjectRecovery[];
+}
+
+export interface ProjectRecovery {
+  projectId: string;
+  storagePath: string;
+  status: "opened" | "missing" | "locked" | "corrupt" | "idMismatch" | "unavailable";
+  message?: string;
 }

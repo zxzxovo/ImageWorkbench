@@ -59,4 +59,17 @@ describe("browser workspace persistence", () => {
     expect(click).toHaveBeenCalledOnce();
     click.mockRestore();
   });
+
+  it("exports multiple previews without opening one save dialog per image", async () => {
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+
+    const result = await api.exportAssets([
+      { sourcePath: "ignored-1", suggestedName: "one.png", previewUrl: "data:image/png;base64,AAAA" },
+      { sourcePath: "ignored-2", suggestedName: "two.png", previewUrl: "data:image/png;base64,BBBB" },
+    ]);
+
+    expect(result.exported).toBe(2);
+    expect(click).toHaveBeenCalledTimes(2);
+    click.mockRestore();
+  });
 });

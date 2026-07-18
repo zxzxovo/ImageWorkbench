@@ -11,8 +11,9 @@ use crate::app_state::AppState;
 use crate::bridge::{
     CommandError, CommandResult, DescriptionPlacement, GenerateImagesRequest, GeneratedAsset,
     GenerationCommandResult, GenerationEventEnvelope, GenerationMode, HistoryDetailsDto,
-    HistoryOutputDto, ImportedInputDto, ProjectDetailsDto, ProviderProfileDto, WorkspaceSnapshot,
-    parse_timestamp,
+    HistoryOutputDto, ImportedInputDto, ProjectCopyMode, ProjectDeleteResult, ProjectDetailsDto,
+    ProjectDto, ProjectHealthStatus, ProjectMoveResult, ProjectRecoveryDto, ProviderProfileDto,
+    WorkspaceSnapshot, parse_timestamp,
 };
 use crate::domain::{
     ContextPlacement, ErrorRecord, GenerationPreset, ImageSize, JobStatus, Operation, OutputSpec,
@@ -20,7 +21,10 @@ use crate::domain::{
 };
 use crate::providers::{ProviderAdapter, create_adapter};
 use crate::runtime::{execute_generation, poll_remote_tasks};
-use crate::storage::{ProviderRemapResult, RemoteFileRecord, strip_extended_length_prefix};
+use crate::storage::{
+    ProjectDuplicateMode, ProviderRemapResult, RemoteFileRecord, delete_owned_project_files,
+    duplicate_project, strip_extended_length_prefix,
+};
 
 const WORKSPACE_SETTING_KEY: &str = "workspace.v1";
 
@@ -44,6 +48,68 @@ pub struct HistoryMutationResultDto {
     pub remote_files_retained: u32,
     #[serde(default)]
     pub failures: Vec<LifecycleFailureDto>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteCleanupResultDto {
+    pub requested_files: u32,
+    pub deleted_files: u32,
+    #[serde(default)]
+    pub failures: Vec<LifecycleFailureDto>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct AssetSelectionDto {
+    pub run_id: String,
+    pub output_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct AssetMutationFailureDto {
+    pub run_id: String,
+    pub output_id: String,
+    pub code: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct AssetMutationResultDto {
+    pub requested_assets: u32,
+    #[serde(default)]
+    pub deleted_asset_ids: Vec<String>,
+    pub local_assets_deleted: u32,
+    pub remote_files_deleted: u32,
+    pub remote_files_retained: u32,
+    #[serde(default)]
+    pub failures: Vec<AssetMutationFailureDto>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct BatchExportItemDto {
+    pub source_path: String,
+    pub suggested_name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct BatchExportFailureDto {
+    pub source_path: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct BatchExportResultDto {
+    pub exported: u32,
+    #[serde(default)]
+    pub exported_paths: Vec<String>,
+    #[serde(default)]
+    pub failures: Vec<BatchExportFailureDto>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, specta::Type)]
@@ -80,21 +146,76 @@ pub async fn workspace_load(
         .global_store()
         .setting::<WorkspaceSnapshot>(WORKSPACE_SETTING_KEY)
         .await?;
+    let mut recovery = Vec::new();
     if let Some(snapshot) = &snapshot {
         for project in &snapshot.projects {
             let database = std::path::Path::new(&project.storage_path)
                 .join(".imageworkbench")
                 .join("project.sqlite3");
             if database.is_file() {
-                if let Err(error) = state.open_project(&project.storage_path).await {
-                    tracing::warn!(project_id = %project.id, path = %project.storage_path, %error, "failed to reopen project");
+                match state.open_project(&project.storage_path).await {
+                    Ok(store) => {
+                        let summary = store.summary().await?;
+                        if summary.id == project.id {
+                            recovery.push(ProjectRecoveryDto {
+                                project_id: project.id.clone(),
+                                storage_path: project.storage_path.clone(),
+                                status: ProjectHealthStatus::Opened,
+                                message: None,
+                            });
+                        } else {
+                            state.close_project(&summary.id).await;
+                            recovery.push(ProjectRecoveryDto {
+                                project_id: project.id.clone(),
+                                storage_path: project.storage_path.clone(),
+                                status: ProjectHealthStatus::IdMismatch,
+                                message: Some(format!(
+                                    "storage path belongs to project {}",
+                                    summary.id
+                                )),
+                            });
+                        }
+                    }
+                    Err(error) => {
+                        tracing::warn!(project_id = %project.id, path = %project.storage_path, %error, "failed to reopen project");
+                        recovery.push(ProjectRecoveryDto {
+                            project_id: project.id.clone(),
+                            storage_path: project.storage_path.clone(),
+                            status: classify_project_open_error(&error),
+                            message: Some(error.to_string()),
+                        });
+                    }
                 }
             } else {
                 tracing::warn!(project_id = %project.id, path = %project.storage_path, "project database is missing during workspace restore");
+                recovery.push(ProjectRecoveryDto {
+                    project_id: project.id.clone(),
+                    storage_path: project.storage_path.clone(),
+                    status: ProjectHealthStatus::Missing,
+                    message: Some("project database is missing".to_owned()),
+                });
             }
         }
     }
-    Ok(snapshot.map(|snapshot| snapshot.for_global_storage()))
+    Ok(snapshot.map(|snapshot| {
+        let mut sanitized = snapshot.for_global_storage();
+        sanitized.project_recovery = recovery;
+        sanitized
+    }))
+}
+
+fn classify_project_open_error(error: &CommandError) -> ProjectHealthStatus {
+    let message = error.message.to_ascii_lowercase();
+    if message.contains("locked") || message.contains("busy") {
+        ProjectHealthStatus::Locked
+    } else if message.contains("malformed")
+        || message.contains("corrupt")
+        || message.contains("stored data is invalid")
+    {
+        ProjectHealthStatus::Corrupt
+    } else {
+        ProjectHealthStatus::Unavailable
+    }
 }
 
 #[tauri::command]
@@ -518,6 +639,81 @@ pub async fn export_asset(
 
 #[tauri::command]
 #[specta::specta]
+pub async fn export_assets(
+    state: tauri::State<'_, AppState>,
+    destination_directory: String,
+    assets: Vec<BatchExportItemDto>,
+) -> CommandResult<BatchExportResultDto> {
+    let destination_directory = std::path::PathBuf::from(destination_directory);
+    if !destination_directory.is_dir() {
+        return Err(CommandError::validation(
+            "batch export destination must be an existing directory",
+        ));
+    }
+    let mut result = BatchExportResultDto::default();
+    for asset in assets {
+        let outcome: CommandResult<std::path::PathBuf> = async {
+            let source = state
+                .validate_open_project_path(asset.source_path.clone())
+                .await?;
+            if !source.is_file() {
+                return Err(CommandError::validation("export source is not a file"));
+            }
+            let filename = std::path::Path::new(&asset.suggested_name)
+                .file_name()
+                .filter(|name| !name.is_empty())
+                .ok_or_else(|| CommandError::validation("export filename is invalid"))?;
+            let destination = available_export_path(&destination_directory, filename);
+            tokio::fs::copy(&source, &destination)
+                .await
+                .map_err(|error| CommandError::new("asset_export", error.to_string()))?;
+            Ok(destination)
+        }
+        .await;
+        match outcome {
+            Ok(path) => {
+                result.exported = result.exported.saturating_add(1);
+                result
+                    .exported_paths
+                    .push(path.to_string_lossy().into_owned());
+            }
+            Err(error) => result.failures.push(BatchExportFailureDto {
+                source_path: asset.source_path,
+                message: error.message,
+            }),
+        }
+    }
+    Ok(result)
+}
+
+fn available_export_path(
+    directory: &std::path::Path,
+    filename: &std::ffi::OsStr,
+) -> std::path::PathBuf {
+    let initial = directory.join(filename);
+    if !initial.exists() {
+        return initial;
+    }
+    let source = std::path::Path::new(filename);
+    let stem = source
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or("image");
+    let extension = source.extension().and_then(|value| value.to_str());
+    for index in 1..=10_000_u32 {
+        let candidate = match extension {
+            Some(extension) => directory.join(format!("{stem} ({index}).{extension}")),
+            None => directory.join(format!("{stem} ({index})")),
+        };
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+    directory.join(format!("{stem}-{}", uuid::Uuid::new_v4()))
+}
+
+#[tauri::command]
+#[specta::specta]
 pub async fn project_create(
     state: tauri::State<'_, AppState>,
     project_id: String,
@@ -529,6 +725,128 @@ pub async fn project_create(
         error
     })?;
     Ok(store.summary().await?)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn project_update(
+    state: tauri::State<'_, AppState>,
+    project: ProjectDto,
+) -> CommandResult<ProjectSummary> {
+    let store = state.project(&project.id).await?;
+    let summary = save_project_summary(&store, &project).await?;
+    state.global_store().add_recent_project(&summary).await?;
+    Ok(summary)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn project_move(
+    state: tauri::State<'_, AppState>,
+    project_id: String,
+    destination: String,
+    delete_original: bool,
+) -> CommandResult<ProjectMoveResult> {
+    if destination.trim().is_empty() {
+        return Err(CommandError::validation("project destination is required"));
+    }
+    let (moved, source_root) = state.move_project(&project_id, &destination).await?;
+    let project = moved.summary().await?;
+    if let Some(mut workspace) = state
+        .global_store()
+        .setting::<WorkspaceSnapshot>(WORKSPACE_SETTING_KEY)
+        .await?
+    {
+        if let Some(entry) = workspace
+            .projects
+            .iter_mut()
+            .find(|entry| entry.id == project_id)
+        {
+            entry.storage_path = project.root_path.to_string_lossy().into_owned();
+            entry.updated_at = Utc::now().to_rfc3339();
+        }
+        state
+            .global_store()
+            .set_setting(WORKSPACE_SETTING_KEY, &workspace.for_global_storage())
+            .await?;
+    }
+    let cleanup_error = if delete_original {
+        match tokio::task::spawn_blocking(move || delete_owned_project_files(source_root)).await {
+            Ok(Ok(())) => None,
+            Ok(Err(error)) => Some(error.to_string()),
+            Err(error) => Some(format!("original project cleanup task failed: {error}")),
+        }
+    } else {
+        None
+    };
+    Ok(ProjectMoveResult {
+        project,
+        original_files_deleted: delete_original && cleanup_error.is_none(),
+        cleanup_error,
+    })
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn project_duplicate(
+    state: tauri::State<'_, AppState>,
+    source_project_id: String,
+    project_id: String,
+    name: String,
+    path: String,
+    mode: ProjectCopyMode,
+) -> CommandResult<ProjectSummary> {
+    if project_id.trim().is_empty() || name.trim().is_empty() || path.trim().is_empty() {
+        return Err(CommandError::validation(
+            "project ID, name, and destination are required",
+        ));
+    }
+    let source = state.project(&source_project_id).await?;
+    let duplicate_mode = match mode {
+        ProjectCopyMode::Full => ProjectDuplicateMode::Full,
+        ProjectCopyMode::Configuration => ProjectDuplicateMode::Configuration,
+    };
+    let duplicate = duplicate_project(&source, &path, &project_id, &name, duplicate_mode).await?;
+    duplicate.pool().close().await;
+    drop(duplicate);
+    let opened = state.open_project(&path).await?;
+    Ok(opened.summary().await?)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn project_delete(
+    state: tauri::State<'_, AppState>,
+    project_id: String,
+    delete_files: bool,
+) -> CommandResult<ProjectDeleteResult> {
+    let project = state.project(&project_id).await?;
+    let root = project.layout().root().to_owned();
+    for run_id in project.run_ids().await? {
+        state.cancel(&run_id).await;
+    }
+    project.mark_local_work_interrupted().await?;
+    state.close_project(&project_id).await;
+    project.pool().close().await;
+    drop(project);
+    state
+        .global_store()
+        .remove_recent_project(&project_id)
+        .await?;
+    let file_error = if delete_files {
+        match tokio::task::spawn_blocking(move || delete_owned_project_files(root)).await {
+            Ok(Ok(())) => None,
+            Ok(Err(error)) => Some(error.to_string()),
+            Err(error) => Some(format!("project file cleanup task failed: {error}")),
+        }
+    } else {
+        None
+    };
+    Ok(ProjectDeleteResult {
+        removed: true,
+        files_deleted: delete_files && file_error.is_none(),
+        file_error,
+    })
 }
 
 #[tauri::command]
@@ -873,6 +1191,126 @@ pub async fn history_clear(
 
 #[tauri::command]
 #[specta::specta]
+pub async fn results_delete_assets(
+    state: tauri::State<'_, AppState>,
+    project_id: String,
+    assets: Vec<AssetSelectionDto>,
+) -> CommandResult<AssetMutationResultDto> {
+    let project = state.project(&project_id).await?;
+    let mut result = AssetMutationResultDto::default();
+    let mut seen = HashSet::new();
+    for asset in assets {
+        if !seen.insert(asset.output_id.clone()) {
+            continue;
+        }
+        result.requested_assets = result.requested_assets.saturating_add(1);
+        let Some(output) = project.output(&asset.output_id).await? else {
+            result.failures.push(AssetMutationFailureDto {
+                run_id: asset.run_id,
+                output_id: asset.output_id,
+                code: "not_found".to_owned(),
+                message: "result asset no longer exists".to_owned(),
+            });
+            continue;
+        };
+        if output.run_id != asset.run_id {
+            result.failures.push(AssetMutationFailureDto {
+                run_id: asset.run_id,
+                output_id: asset.output_id,
+                code: "validation".to_owned(),
+                message: "result asset does not belong to the requested run".to_owned(),
+            });
+            continue;
+        }
+        let Some(run) = project.run(&output.run_id).await? else {
+            result.failures.push(AssetMutationFailureDto {
+                run_id: output.run_id,
+                output_id: output.id,
+                code: "not_found".to_owned(),
+                message: "result run no longer exists".to_owned(),
+            });
+            continue;
+        };
+        if let Err(error) = project.validate_output_local_asset(&output.id).await {
+            let error: CommandError = error.into();
+            result.failures.push(AssetMutationFailureDto {
+                run_id: output.run_id,
+                output_id: output.id,
+                code: error.code,
+                message: error.message,
+            });
+            continue;
+        }
+
+        if let Some(provider_file_id) = output.provider_file_id.as_deref() {
+            let record = project
+                .remote_file(&run.request.provider_profile_id, provider_file_id)
+                .await?;
+            let provider_profile_id = record
+                .as_ref()
+                .map(|file| file.provider_profile_id.as_str())
+                .unwrap_or(&run.request.provider_profile_id);
+            if project
+                .remote_file_is_referenced_by_other_output(
+                    &output.id,
+                    provider_profile_id,
+                    provider_file_id,
+                )
+                .await?
+            {
+                result.remote_files_retained = result.remote_files_retained.saturating_add(1);
+            } else {
+                let remote_result: CommandResult<()> = async {
+                    let adapter = adapter_for_stored_profile(&state, provider_profile_id).await?;
+                    adapter.delete_file(provider_file_id).await?;
+                    Ok(())
+                }
+                .await;
+                match remote_result {
+                    Ok(()) => {
+                        if let Some(record) = record {
+                            project.delete_remote_file(&record.id).await?;
+                        }
+                        result.remote_files_deleted = result.remote_files_deleted.saturating_add(1);
+                    }
+                    Err(error) => {
+                        record_remote_file_delete_failure(&project, record.as_ref(), &error)
+                            .await?;
+                        result.failures.push(AssetMutationFailureDto {
+                            run_id: output.run_id.clone(),
+                            output_id: output.id.clone(),
+                            code: error.code,
+                            message: error.message,
+                        });
+                    }
+                }
+            }
+        }
+
+        match project.delete_output(&output.id, true).await {
+            Ok(deleted) if deleted.deleted => {
+                result.deleted_asset_ids.push(output.id);
+                if deleted.local_asset_deleted {
+                    result.local_assets_deleted = result.local_assets_deleted.saturating_add(1);
+                }
+            }
+            Ok(_) => {}
+            Err(error) => {
+                let error: CommandError = error.into();
+                result.failures.push(AssetMutationFailureDto {
+                    run_id: output.run_id,
+                    output_id: output.id,
+                    code: error.code,
+                    message: error.message,
+                });
+            }
+        }
+    }
+    Ok(result)
+}
+
+#[tauri::command]
+#[specta::specta]
 pub async fn project_remap_provider(
     state: tauri::State<'_, AppState>,
     project_id: String,
@@ -906,7 +1344,61 @@ pub async fn remote_tasks_poll(
     state: tauri::State<'_, AppState>,
     project_id: String,
 ) -> CommandResult<Vec<GenerationCommandResult>> {
+    let cleanup = retry_remote_file_cleanup(&state, &project_id).await?;
+    if !cleanup.failures.is_empty() {
+        tracing::warn!(
+            project_id,
+            failures = cleanup.failures.len(),
+            "remote file cleanup retries remain pending"
+        );
+    }
     poll_remote_tasks(&state, &project_id).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn remote_cleanup_retry(
+    state: tauri::State<'_, AppState>,
+    project_id: String,
+) -> CommandResult<RemoteCleanupResultDto> {
+    retry_remote_file_cleanup(&state, &project_id).await
+}
+
+async fn retry_remote_file_cleanup(
+    state: &AppState,
+    project_id: &str,
+) -> CommandResult<RemoteCleanupResultDto> {
+    let project = state.project(project_id).await?;
+    let files = project.pending_remote_file_deletions(Utc::now()).await?;
+    let mut result = RemoteCleanupResultDto {
+        requested_files: files.len() as u32,
+        ..RemoteCleanupResultDto::default()
+    };
+    for file in files {
+        let outcome: CommandResult<()> = async {
+            let adapter = adapter_for_stored_profile(state, &file.provider_profile_id).await?;
+            adapter.delete_file(&file.provider_file_id).await?;
+            Ok(())
+        }
+        .await;
+        match outcome {
+            Ok(()) => {
+                project.delete_remote_file(&file.id).await?;
+                result.deleted_files = result.deleted_files.saturating_add(1);
+            }
+            Err(error) => {
+                record_remote_file_delete_failure(&project, Some(&file), &error).await?;
+                result.failures.push(LifecycleFailureDto {
+                    run_id: None,
+                    provider_profile_id: Some(file.provider_profile_id),
+                    remote_file_id: Some(file.provider_file_id),
+                    code: error.code,
+                    message: error.message,
+                });
+            }
+        }
+    }
+    Ok(result)
 }
 
 async fn adapter_for_profile(
@@ -1265,6 +1757,36 @@ async fn delete_provider_data(state: &AppState, provider_id: &str) -> CommandRes
         .global_store()
         .setting::<WorkspaceSnapshot>(WORKSPACE_SETTING_KEY)
         .await?;
+    let workspace_references = workspace
+        .as_ref()
+        .map(|snapshot| {
+            snapshot
+                .projects
+                .iter()
+                .filter(|project| {
+                    project.settings.default_provider_id == provider_id
+                        || project
+                            .presets
+                            .iter()
+                            .any(|preset| preset.provider_id == provider_id)
+                })
+                .count() as u64
+        })
+        .unwrap_or_default();
+    let mut stored_references = 0_u64;
+    for project in state.open_project_stores().await {
+        stored_references =
+            stored_references.saturating_add(project.provider_reference_count(provider_id).await?);
+    }
+    let references = workspace_references.saturating_add(stored_references);
+    if references > 0 {
+        let mut error = CommandError::new(
+            "provider_in_use",
+            "provider is referenced by projects, history, or remote resources; archive it or migrate those references before permanent deletion",
+        );
+        error.details = Some(json!({ "referenceCount": references }));
+        return Err(error);
+    }
     let mut credential_keys =
         HashSet::from([crate::security::CredentialKey::provider(provider_id)]);
     if let Some(profile) = &stored_profile {
@@ -1422,36 +1944,7 @@ async fn sync_workspace_projects(
         let store = state
             .open_or_create_project(&project.id, &project.name, &project.storage_path)
             .await?;
-        let mut summary = store.summary().await?;
-        summary.name.clone_from(&project.name);
-        summary.updated_at = parse_timestamp(&project.updated_at).unwrap_or_else(Utc::now);
-        summary.default_provider_profile_id =
-            non_empty(&project.settings.default_provider_id).map(ToOwned::to_owned);
-        summary.default_model_id =
-            non_empty(&project.settings.default_model).map(ToOwned::to_owned);
-        summary.default_parameters = BTreeMap::from([
-            (
-                "useCommonDescriptions".to_owned(),
-                Value::Bool(project.settings.use_common_descriptions),
-            ),
-            (
-                "saveMetadata".to_owned(),
-                Value::Bool(project.settings.save_metadata),
-            ),
-            (
-                "saveRawResponse".to_owned(),
-                Value::Bool(project.settings.save_raw_response),
-            ),
-            (
-                "autoOpenFolder".to_owned(),
-                Value::Bool(project.settings.auto_open_folder),
-            ),
-            (
-                "namingPattern".to_owned(),
-                Value::String(project.settings.naming_pattern.clone()),
-            ),
-        ]);
-        store.save_summary(&summary).await?;
+        let summary = save_project_summary(&store, project).await?;
         state.global_store().add_recent_project(&summary).await?;
 
         for (index, description) in project.descriptions.iter().enumerate() {
@@ -1519,6 +2012,59 @@ async fn sync_workspace_projects(
     Ok(())
 }
 
+async fn save_project_summary(
+    store: &crate::storage::ProjectStore,
+    project: &ProjectDto,
+) -> CommandResult<ProjectSummary> {
+    let mut summary = store.summary().await?;
+    summary.name = project.name.trim().to_owned();
+    summary.updated_at = parse_timestamp(&project.updated_at).unwrap_or_else(Utc::now);
+    summary.default_provider_profile_id =
+        non_empty(&project.settings.default_provider_id).map(ToOwned::to_owned);
+    summary.default_model_id = non_empty(&project.settings.default_model).map(ToOwned::to_owned);
+    summary.default_parameters = BTreeMap::from([
+        (
+            "description".to_owned(),
+            Value::String(project.description.clone()),
+        ),
+        ("color".to_owned(), Value::String(project.color.clone())),
+        (
+            "useCommonDescriptions".to_owned(),
+            Value::Bool(project.settings.use_common_descriptions),
+        ),
+        (
+            "saveMetadata".to_owned(),
+            Value::Bool(project.settings.save_metadata),
+        ),
+        (
+            "saveRawResponse".to_owned(),
+            Value::Bool(project.settings.save_raw_response),
+        ),
+        (
+            "autoOpenFolder".to_owned(),
+            Value::Bool(project.settings.auto_open_folder),
+        ),
+        (
+            "namingPattern".to_owned(),
+            Value::String(project.settings.naming_pattern.clone()),
+        ),
+        (
+            "flatOutput".to_owned(),
+            Value::Bool(project.settings.flat_output),
+        ),
+        (
+            "defaultStream".to_owned(),
+            project
+                .settings
+                .default_stream
+                .map(Value::Bool)
+                .unwrap_or(Value::Null),
+        ),
+    ]);
+    store.save_summary(&summary).await?;
+    Ok(summary)
+}
+
 fn non_empty(value: &str) -> Option<&str> {
     let value = value.trim();
     (!value.is_empty()).then_some(value)
@@ -1565,7 +2111,12 @@ pub fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             generate_images_legacy,
             reveal_path,
             export_asset,
+            export_assets,
             project_create,
+            project_update,
+            project_move,
+            project_duplicate,
+            project_delete,
             project_open,
             project_load_details,
             project_close,
@@ -1584,8 +2135,10 @@ pub fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             history_details,
             history_delete,
             history_clear,
+            results_delete_assets,
             run_cancel,
             remote_tasks_poll,
+            remote_cleanup_retry,
             project_remap_provider,
         ])
         .typ::<GenerationEventEnvelope>()
@@ -1690,7 +2243,8 @@ mod tests {
     use crate::bridge::{
         ApiMode, CommonDescriptionDto, FrontendAuthScheme, FrontendGenerationPreset,
         FrontendProviderKind, FrontendTaskStatus, GeneratedAsset, GenerationTaskDto,
-        HistoryRecordDto, Locale, ProjectDto, ProjectSettingsDto, ProviderProfileDto, UsageDto,
+        HistoryRecordDto, Locale, ProjectDto, ProjectSettingsDto, ProviderProfileDto, ThemeMode,
+        UsageDto,
     };
     use crate::domain::{
         ErrorRecord, ExecutionMode, ModelCapability, OutputPart, OutputPartKind,
@@ -1832,10 +2386,12 @@ mod tests {
             .unwrap();
         let snapshot = WorkspaceSnapshot {
             locale: Locale::EnUs,
+            theme: ThemeMode::Light,
             active_project_id: "project".to_owned(),
             projects: vec![project_dto(&project_root, now)],
             providers: vec![],
             history: vec![],
+            project_recovery: vec![],
         };
 
         sync_workspace_projects(&state, &snapshot).await.unwrap();
@@ -1932,10 +2488,12 @@ mod tests {
         };
         let snapshot = WorkspaceSnapshot {
             locale: Locale::EnUs,
+            theme: ThemeMode::Light,
             active_project_id: "project".to_owned(),
             projects: vec![project],
             providers: vec![provider_dto()],
             history: vec![history],
+            project_recovery: vec![],
         };
 
         save_workspace_snapshot(&state, snapshot).await.unwrap();
@@ -1952,20 +2510,21 @@ mod tests {
         assert!(stored.projects[0].descriptions.is_empty());
         assert!(stored.projects[0].presets.is_empty());
 
-        assert!(delete_provider_data(&state, "provider").await.unwrap());
+        let delete_error = delete_provider_data(&state, "provider").await.unwrap_err();
+        assert_eq!(delete_error.code, "provider_in_use");
         assert!(
             state
                 .global_store()
                 .provider("provider")
                 .await
                 .unwrap()
-                .is_none()
+                .is_some()
         );
         assert!(
             state
                 .secret(crate::security::CredentialKey::provider("provider"))
                 .await
-                .is_err()
+                .is_ok()
         );
     }
 

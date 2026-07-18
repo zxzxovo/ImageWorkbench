@@ -75,4 +75,27 @@ describe("ProviderModal", () => {
     expect(onUpsert.mock.calls[0][0].discoveredModels).toEqual(["private-image-model", "new-image-model"]);
     sync.mockRestore();
   });
+
+  it("shows provider templates only after Add is selected", async () => {
+    const { container } = render(() => (
+      <ProviderModal
+        open
+        providers={[provider]}
+        t={(key) => key}
+        onClose={vi.fn()}
+        onUpsert={vi.fn()}
+        onDelete={vi.fn(async () => true)}
+      />
+    ));
+
+    expect(container.querySelector(".provider-editor .template-grid")).toBeNull();
+    expect(document.querySelector(".provider-template-picker")).toBeNull();
+
+    await fireEvent.click(screen.getByRole("button", { name: "addProvider" }));
+    expect(document.querySelectorAll(".provider-template-picker .template-button")).toHaveLength(4);
+
+    await fireEvent.click(screen.getByRole("button", { name: "Google Gemini" }));
+    await waitFor(() => expect(document.querySelector(".provider-template-picker[data-expanded]")).toBeNull());
+    expect(screen.getByDisplayValue("Google Gemini - New")).toBeTruthy();
+  });
 });

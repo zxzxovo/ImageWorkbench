@@ -241,6 +241,27 @@ interface HistoryMutationResult {
   failures: Array<{ code: string; message: string }>;
 }
 
+export interface AssetMutationResult {
+  requestedAssets: number;
+  deletedAssetIds: string[];
+  localAssetsDeleted: number;
+  remoteFilesDeleted: number;
+  remoteFilesRetained: number;
+  failures: Array<{ runId: string; outputId: string; code: string; message: string }>;
+}
+
+export interface BatchAssetExport {
+  sourcePath: string;
+  suggestedName: string;
+  previewUrl: string;
+}
+
+export interface BatchExportResult {
+  exported: number;
+  exportedPaths: string[];
+  failures: Array<{ sourcePath: string; message: string }>;
+}
+
 export interface NormalizedError {
   code: string;
   message: string;
@@ -1021,9 +1042,67 @@ export const api = {
     });
   },
 
+  async updateProject(project: Project): Promise<ProjectSummary> {
+    if (!isTauriRuntime()) {
+      return {
+        id: project.id,
+        name: project.name,
+        rootPath: project.storagePath,
+        createdAt: project.createdAt,
+        updatedAt: project.updatedAt,
+        lastOpenedAt: project.updatedAt,
+        defaultProviderProfileId: project.settings.defaultProviderId || undefined,
+        defaultModelId: project.settings.defaultModel || undefined,
+        defaultParameters: {},
+      };
+    }
+    return invoke<ProjectSummary>("project_update", { project });
+  },
+
+  async duplicateProject(
+    sourceProjectId: string,
+    projectId: string,
+    name: string,
+    path: string,
+    mode: "full" | "configuration",
+  ): Promise<ProjectSummary> {
+    if (!isTauriRuntime()) {
+      const now = new Date().toISOString();
+      return {
+        id: projectId,
+        name,
+        rootPath: path,
+        createdAt: now,
+        updatedAt: now,
+        lastOpenedAt: now,
+        defaultParameters: {},
+      };
+    }
+    return invoke<ProjectSummary>("project_duplicate", {
+      sourceProjectId,
+      projectId,
+      name,
+      path,
+      mode,
+    });
+  },
+
+  async deleteProject(projectId: string, deleteFiles: boolean): Promise<{ removed: boolean; filesDeleted: boolean; fileError?: string }> {
+    if (!isTauriRuntime()) return { removed: true, filesDeleted: deleteFiles };
+    return invoke<{ removed: boolean; filesDeleted: boolean; fileError?: string }>("project_delete", { projectId, deleteFiles });
+  },
+
+  async moveProject(projectId: string, destination: string, deleteOriginal = false): Promise<ProjectSummary> {
+    if (!isTauriRuntime()) throw new Error("Project moves require the desktop application");
+    return invoke<ProjectSummary>("project_move", { projectId, destination, deleteOriginal });
+  },
+
   async loadProjectDetails(projectId: string): Promise<{ descriptions: CommonDescription[]; presets: GenerationPreset[]; history: HistoryRecord[] }> {
     if (!isTauriRuntime()) return { descriptions: [], presets: [], history: [] };
-    const details = await invoke<RawProjectDetails>("project_load_details", { projectId, recentRunLimit: 50 });
+    // Results and history are user-visible archives, not a recent activity
+    // feed. Keep a generous server-side bound while retaining pagination in
+    // the UI for very large projects.
+    const details = await invoke<RawProjectDetails>("project_load_details", { projectId, recentRunLimit: 5000 });
     const contexts = details.contexts;
     const rawPresets = details.presets;
     const descriptions = [...contexts]
@@ -1135,6 +1214,36 @@ export const api = {
     return true;
   },
 
+  async exportAssets(assets: BatchAssetExport[]): Promise<BatchExportResult> {
+    if (assets.length === 0) return { exported: 0, exportedPaths: [], failures: [] };
+    if (!isTauriRuntime()) {
+      for (const asset of assets) {
+        const link = document.createElement("a");
+        link.href = asset.previewUrl;
+        link.download = asset.suggestedName;
+        document.body.append(link);
+        link.click();
+        link.remove();
+      }
+      return { exported: assets.length, exportedPaths: [], failures: [] };
+    }
+    try {
+      const { getCurrentWindow } = await import("@tauri-apps/api/window");
+      await getCurrentWindow().setFocus();
+    } catch {
+      // The directory picker can still open if focusing the window is unsupported.
+    }
+    const { open } = await import("@tauri-apps/plugin-dialog");
+    const destinationDirectory = await open({ directory: true, multiple: false });
+    if (typeof destinationDirectory !== "string") {
+      return { exported: 0, exportedPaths: [], failures: [] };
+    }
+    return invoke<BatchExportResult>("export_assets", {
+      destinationDirectory,
+      assets: assets.map(({ sourcePath, suggestedName }) => ({ sourcePath, suggestedName })),
+    });
+  },
+
   async testProvider(provider: ProviderProfile): Promise<boolean> {
     const sanitizedProvider = sanitizeProviderForCommand(provider);
     return invokeWithFallback("provider_test", { provider: sanitizedProvider }, async () => {
@@ -1190,6 +1299,23 @@ export const api = {
       deleteLocalAssets: true,
       deleteRemoteFiles: true,
     });
+  },
+
+  async deleteResultAssets(
+    projectId: string,
+    assets: Array<{ runId: string; outputId: string }>,
+  ): Promise<AssetMutationResult> {
+    if (!isTauriRuntime()) {
+      return {
+        requestedAssets: assets.length,
+        deletedAssetIds: assets.map((asset) => asset.outputId),
+        localAssetsDeleted: assets.length,
+        remoteFilesDeleted: 0,
+        remoteFilesRetained: 0,
+        failures: [],
+      };
+    }
+    return invoke<AssetMutationResult>("results_delete_assets", { projectId, assets });
   },
 
   async clearHistory(projectId: string): Promise<HistoryMutationResult> {

@@ -9,7 +9,7 @@ use tokio_util::sync::CancellationToken;
 use crate::bridge::{CommandError, CommandResult, ProviderProfileDto};
 use crate::domain::ProjectSummary;
 use crate::security::{CredentialKey, Keyring, KeyringError, SystemKeyring};
-use crate::storage::{GlobalStore, ProjectStore, strip_extended_length_prefix};
+use crate::storage::{GlobalStore, ProjectStore, stage_project_move, strip_extended_length_prefix};
 
 const DEFAULT_PROVIDER_CONCURRENCY: usize = 2;
 
@@ -159,6 +159,7 @@ impl AppState {
 
     pub async fn open_project(&self, root: impl AsRef<Path>) -> CommandResult<Arc<ProjectStore>> {
         let store = Arc::new(ProjectStore::open(root).await?);
+        store.mark_local_work_interrupted().await?;
         let summary = store.summary().await?;
         self.global_store.add_recent_project(&summary).await?;
         self.projects
@@ -248,6 +249,50 @@ impl AppState {
         self.projects.write().await.remove(project_id).is_some()
     }
 
+    pub async fn move_project(
+        &self,
+        project_id: &str,
+        destination: impl AsRef<Path>,
+    ) -> CommandResult<(Arc<ProjectStore>, PathBuf)> {
+        let source = self.project(project_id).await?;
+        if source.has_active_work().await? {
+            return Err(CommandError::new(
+                "project_busy",
+                "project cannot be moved while local or remote generation work is active",
+            ));
+        }
+        let source_root = source.layout().root().to_owned();
+        self.projects.write().await.remove(project_id);
+        let moved = match stage_project_move(&source, destination).await {
+            Ok(store) => Arc::new(store),
+            Err(error) => {
+                self.projects
+                    .write()
+                    .await
+                    .insert(project_id.to_owned(), Arc::clone(&source));
+                return Err(error.into());
+            }
+        };
+        let summary = moved.summary().await?;
+        if summary.id != project_id {
+            self.projects
+                .write()
+                .await
+                .insert(project_id.to_owned(), Arc::clone(&source));
+            return Err(CommandError::new(
+                "project_id_mismatch",
+                "moved project identity does not match the requested project",
+            ));
+        }
+        source.pool().close().await;
+        self.projects
+            .write()
+            .await
+            .insert(project_id.to_owned(), Arc::clone(&moved));
+        self.global_store.add_recent_project(&summary).await?;
+        Ok((moved, source_root))
+    }
+
     pub async fn open_project_summaries(&self) -> CommandResult<Vec<ProjectSummary>> {
         let stores = self
             .projects
@@ -262,6 +307,10 @@ impl AppState {
         }
         summaries.sort_by(|left, right| right.last_opened_at.cmp(&left.last_opened_at));
         Ok(summaries)
+    }
+
+    pub async fn open_project_stores(&self) -> Vec<Arc<ProjectStore>> {
+        self.projects.read().await.values().cloned().collect()
     }
 
     pub async fn provider_limit(&self, provider_profile_id: &str) -> Arc<Semaphore> {
@@ -439,6 +488,27 @@ mod tests {
         );
         state.global_store.pool().close().await;
         store.pool().close().await;
+    }
+
+    #[tokio::test]
+    async fn refuses_to_create_a_project_in_an_occupied_directory() {
+        let directory = tempfile::tempdir().unwrap();
+        let global = GlobalStore::open(directory.path().join("global.sqlite3"))
+            .await
+            .unwrap();
+        let state = AppState::new(global, Arc::new(MemoryKeyring::default()));
+        let root = directory.path().join("occupied");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("user-file.txt"), b"keep").unwrap();
+
+        let error = state
+            .create_project("project-id", "Example", &root)
+            .await
+            .unwrap_err();
+
+        assert!(error.message.contains("not empty"));
+        assert!(root.join("user-file.txt").is_file());
+        state.global_store.pool().close().await;
     }
 
     #[tokio::test]

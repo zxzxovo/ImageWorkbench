@@ -1,4 +1,4 @@
-import { createSignal, onMount } from "solid-js";
+import { createEffect, createSignal } from "solid-js";
 import { Brush, Eraser, FileUp, FlipHorizontal2, Hand, Minus, Plus, RotateCcw } from "lucide-solid";
 import type { TranslationKey } from "../lib/i18n";
 import { IconButton } from "./common";
@@ -8,6 +8,7 @@ interface MaskCanvasProps {
   sourceUrl?: string;
   sourceWidth: number;
   sourceHeight: number;
+  initialMaskDataUrl?: string;
   onChange: (dataUrl: string) => void;
 }
 
@@ -127,7 +128,28 @@ export default function MaskCanvas(props: MaskCanvasProps) {
     reader.readAsDataURL(file);
   };
 
-  onMount(() => clear());
+  let loadedMaskKey = "";
+  createEffect(() => {
+    const mask = props.initialMaskDataUrl?.trim() ?? "";
+    const key = `${props.sourceUrl ?? ""}|${props.sourceWidth}x${props.sourceHeight}|${mask}`;
+    if (key === loadedMaskKey) return;
+    loadedMaskKey = key;
+    if (!mask) props.onChange("");
+    const ctx = context();
+    if (!ctx) return;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    if (!mask) {
+      return;
+    }
+    const image = new Image();
+    image.onload = () => {
+      const next = context();
+      if (!next || key !== loadedMaskKey) return;
+      next.clearRect(0, 0, canvas.width, canvas.height);
+      next.drawImage(image, 0, 0, canvas.width, canvas.height);
+    };
+    image.src = mask;
+  });
 
   return (
     <section class="mask-editor">

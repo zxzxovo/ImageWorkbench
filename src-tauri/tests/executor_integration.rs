@@ -103,23 +103,20 @@ async fn test_sse_stream_generation() {
 
     // For now we accept that streaming might not be fully supported in tests
     // The important part is that the mock server correctly handles SSE format
-    if result.is_ok() {
-        let response = result.unwrap();
-        assert_eq!(response.provider, ProviderKind::OpenAi);
-
-        // Verify streaming events were captured
-        let captured_events = events.lock().unwrap();
-        assert!(
-            !captured_events.is_empty() || response.outputs.len() > 0,
-            "Should have streaming events or outputs"
-        );
-    } else {
-        // Streaming might not be fully supported - that's ok for this test
-        // We've verified the mock setup is correct
-        println!(
-            "Streaming not fully supported in test environment: {:?}",
-            result.err()
-        );
+    match result {
+        Ok(response) => {
+            assert_eq!(response.provider, ProviderKind::OpenAi);
+            let captured_events = events.lock().unwrap();
+            assert!(
+                !captured_events.is_empty() || !response.outputs.is_empty(),
+                "Should have streaming events or outputs"
+            );
+        }
+        Err(error) => {
+            // Streaming might not be fully supported in every test runtime;
+            // the mock setup and request path are still covered.
+            println!("Streaming not fully supported in test environment: {error:?}");
+        }
     }
 }
 
