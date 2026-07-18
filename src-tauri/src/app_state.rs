@@ -305,7 +305,7 @@ impl AppState {
         for store in stores {
             summaries.push(store.summary().await?);
         }
-        summaries.sort_by(|left, right| right.last_opened_at.cmp(&left.last_opened_at));
+        summaries.sort_by_key(|summary| std::cmp::Reverse(summary.last_opened_at));
         Ok(summaries)
     }
 
