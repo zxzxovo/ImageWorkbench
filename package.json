@@ -12,7 +12,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
-    "check:version": "node scripts/check-version.mjs"
+    "check:version": "node scripts/check-version.mjs",
+    "configure:release-updater": "node scripts/configure-release-updater.mjs"
   },
   "dependencies": {
     "@kobalte/core": "^0.13.0",
