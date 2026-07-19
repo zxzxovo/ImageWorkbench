@@ -129,22 +129,23 @@ pub async fn stage_project_move(
         // staging connection is closed. Prefer the atomic rename, but use a
         // verified directory copy as a safe fallback rather than surfacing a
         // platform-specific "access denied" move failure.
-        if let Err(rename_error) = fs::rename(&staging, &destination) {
-            if rename_error.kind() != std::io::ErrorKind::PermissionDenied {
+        if let Err(rename_error) = rename_with_retry(&staging, &destination) {
+            if !is_file_lock_error(&rename_error) {
                 return Err(rename_error.into());
             }
+            std::thread::sleep(std::time::Duration::from_millis(100));
             fs::create_dir_all(&destination)?;
             copy_directory_contents(&staging, &destination)?;
             for relative in ["assets/inputs", "assets/outputs", "assets/previews"] {
                 verify_directory_copy(&staging.join(relative), &destination.join(relative))?;
             }
-            fs::remove_dir_all(&staging)?;
+            remove_dir_all_with_retry(&staging)?;
         }
         ProjectStore::open(&destination).await
     }
     .await;
     if result.is_err() && staging.exists() {
-        let _ = fs::remove_dir_all(&staging);
+        let _ = remove_dir_all_with_retry(&staging);
     }
     result
 }
@@ -310,6 +311,28 @@ fn remove_dir_all_with_retry(path: &Path) -> StorageResult<()> {
     Err(last_error
         .expect("retry loop must retain the last deletion error")
         .into())
+}
+
+fn is_file_lock_error(error: &std::io::Error) -> bool {
+    error.kind() == std::io::ErrorKind::PermissionDenied
+        || matches!(error.raw_os_error(), Some(32 | 33))
+}
+
+fn rename_with_retry(from: &Path, to: &Path) -> std::io::Result<()> {
+    let mut last_error = None;
+    for attempt in 0..8 {
+        match fs::rename(from, to) {
+            Ok(()) => return Ok(()),
+            Err(error) if is_file_lock_error(&error) => {
+                last_error = Some(error);
+                if attempt < 7 {
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                }
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    Err(last_error.expect("retry loop must retain the last rename error"))
 }
 
 fn remove_if_empty(path: &Path) -> StorageResult<()> {
