@@ -64,9 +64,10 @@ jobs:
       - name: Verify release version
         run: bun run check:version
 
-      - name: Require signing for tagged releases
-        if: startsWith(github.ref, 'refs/tags/') && (vars.SIGNING_MODE == '' || vars.SIGNING_MODE == 'none')
-        run: echo "Tagged releases require SIGNING_MODE=pfx or SIGNING_MODE=azure" && exit 1
+      - name: Configure updater artifacts
+        run: bun run configure:release-updater
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
 
       - name: Run release quality gate
         run: |

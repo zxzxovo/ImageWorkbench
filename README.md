@@ -30,6 +30,13 @@ The updater checks a signed Tauri update manifest and always asks for user
 confirmation before downloading and installing. AppImage updates are handled
 in-app; DEB/RPM updates follow the system package manager.
 
+Release automation treats updater signing as an explicit capability. When
+`TAURI_SIGNING_PRIVATE_KEY` is configured, the workflow emits signed updater
+artifacts and `latest.json`. When it is absent, the workflow still publishes
+unsigned draft installers for internal testing and intentionally does not emit
+`.sig` files; those drafts must not be promoted to a public auto-update
+channel.
+
 ## Stack
 
 - Rust 2024 and Tauri 2
